@@ -501,7 +501,7 @@ def create_app(
 async def _validate(context: AppContext, kb: dict[str, Any], config: KnowledgeBaseConfig) -> dict[str, Any]:
     checks: dict[str, Any] = {}
     errors: list[dict[str, Any]] = []
-    warnings: list[str] = []
+    warnings: list[dict[str, str]] = []
     try:
         refs = await asyncio.to_thread(discover, config.source, context.settings, kb["id"])
         by_type: dict[str, int] = {}
@@ -514,7 +514,7 @@ async def _validate(context: AppContext, kb: dict[str, Any], config: KnowledgeBa
             "megabytes": round(sum(r.size for r in refs) / 1e6, 2),
         }
         if not refs:
-            warnings.append("the source folder has no supported files yet")
+            warnings.append({"stage": "source", "msg": "This folder has no supported files yet."})
     except SourceError as exc:
         checks["source"] = {"ok": False}
         errors.append({"loc": ["source", "path"], "msg": str(exc)})

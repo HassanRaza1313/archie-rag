@@ -42,7 +42,7 @@ cmd_setup() {
     [[ -d "$BACKEND/.venv" ]] || "$py" -m venv "$BACKEND/.venv"
     if [[ -x "$BACKEND/.venv/bin/python" ]]; then PYTHON="$BACKEND/.venv/bin/python"; else PYTHON="$BACKEND/.venv/Scripts/python.exe"; fi
     "$PYTHON" -m pip install --quiet --upgrade pip
-    "$PYTHON" -m pip install --quiet -e "$BACKEND[rerank,dev]"
+    "$PYTHON" -m pip install --quiet -e "${BACKEND}[rerank,dev]"
   fi
   if have npm; then
     info "installing the frontend"
