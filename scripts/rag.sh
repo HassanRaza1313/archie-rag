@@ -191,6 +191,7 @@ EOF
 main() {
   local command="${1:-help}"
   shift || true
+  # shellcheck source=/dev/null  # .env is user-created at runtime
   [[ -f "$ROOT/.env" ]] && set -a && . "$ROOT/.env" && set +a
   case "$command" in
     setup) cmd_setup "$@" ;;
