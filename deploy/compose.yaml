@@ -1,0 +1,117 @@
+# ragkit: split services. Run from the repo root via `./scripts/rag.sh up` (or rag.ps1 on Windows), or:
+#   docker compose -f deploy/compose.yaml --env-file .env up -d --wait
+# Profiles: `ollama` adds a model server and pulls the configured models.
+name: ragkit
+
+x-api: &api
+  image: ${RAG_IMAGE_PREFIX:-ragkit}-api:${RAG_VERSION:-local}
+  build:
+    context: ..
+    dockerfile: deploy/docker/Dockerfile
+    target: api
+    args:
+      INSTALL_OCR: ${RAG_INSTALL_OCR:-false}
+  # Only infrastructure values are passed in; paths inside the container come from the image.
+  environment:
+    RAG_OLLAMA_URL: ${RAG_OLLAMA_URL:-http://host.docker.internal:11434}
+    RAG_OPENAI_BASE_URL: ${RAG_OPENAI_BASE_URL:-https://api.openai.com/v1}
+    RAG_OPENAI_API_KEY: ${RAG_OPENAI_API_KEY:-}
+    RAG_API_KEY: ${RAG_API_KEY:-}
+    RAG_RERANK_PROVIDER: ${RAG_RERANK_PROVIDER:-fastembed}
+    RAG_LOG_FORMAT: ${RAG_LOG_FORMAT:-json}
+    RAG_LOG_LEVEL: ${RAG_LOG_LEVEL:-INFO}
+    RAG_CORS_ORIGINS: ${RAG_CORS_ORIGINS:-http://localhost:8080}
+    RAG_MAX_UPLOAD_MB: ${RAG_MAX_UPLOAD_MB:-100}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    - ${RAG_SOURCES_HOST_DIR:-../data/sources}:/data/sources:ro
+    - ragkit_state:/data/state
+    - model_cache:/data/models
+  depends_on:
+    qdrant:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    <<: *api
+    ports:
+      - "${RAG_PUBLISH_HOST:-127.0.0.1}:${RAG_API_PORT:-8000}:8000"
+
+  worker:
+    <<: *api
+    command: ["ragkit", "worker"]
+    healthcheck:
+      disable: true
+
+  ui:
+    image: ${RAG_IMAGE_PREFIX:-ragkit}-ui:${RAG_VERSION:-local}
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      target: ui
+    environment:
+      RAG_API_UPSTREAM: http://api:8000
+    ports:
+      - "${RAG_PUBLISH_HOST:-127.0.0.1}:${RAG_UI_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:0.40.11
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  ollama-init:
+    profiles: ["ollama"]
+    image: ollama/ollama:0.40.11
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: ollama:11434
+      MODELS: ${RAG_PULL_MODELS:-nomic-embed-text qwen3.5:9b}
+    entrypoint: ["/bin/sh", "-c", "for model in $$MODELS; do ollama pull $$model || exit 1; done"]
+    restart: "no"
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.15.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    volumes:
+      - ./observability:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${RAG_PUBLISH_HOST:-127.0.0.1}:${RAG_PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  qdrant_data:
+  ragkit_state:
+  model_cache:
+  ollama_models:

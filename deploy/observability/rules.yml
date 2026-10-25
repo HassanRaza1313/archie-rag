@@ -1,0 +1,99 @@
+# SLO recording rules and alerts for ragkit. They mirror the in-app evaluation (/api/slo, Telemetry screen):
+#   availability: 99 % of chat requests do not error
+#   latency:      95 % of successful requests show output within 5 s (first token; whole reply for cache hits
+#                 and abstentions)
+# Alerting follows the multi-window, multi-burn-rate method (Google SRE workbook): a long window proves the burn
+# is sustained, a short window proves it is still happening, so alerts fire fast and clear fast.
+# If you change the targets in .env (RAG_SLO_*), change the budgets (0.01, 0.05) and the le bucket here too.
+groups:
+  - name: ragkit-sli
+    rules:
+      - record: ragkit:chat_error_ratio:rate5m
+        expr: sum(rate(ragkit_chat_requests_total{outcome="error"}[5m])) / clamp_min(sum(rate(ragkit_chat_requests_total[5m])), 1e-9)
+      - record: ragkit:chat_error_ratio:rate30m
+        expr: sum(rate(ragkit_chat_requests_total{outcome="error"}[30m])) / clamp_min(sum(rate(ragkit_chat_requests_total[30m])), 1e-9)
+      - record: ragkit:chat_error_ratio:rate1h
+        expr: sum(rate(ragkit_chat_requests_total{outcome="error"}[1h])) / clamp_min(sum(rate(ragkit_chat_requests_total[1h])), 1e-9)
+      - record: ragkit:chat_error_ratio:rate6h
+        expr: sum(rate(ragkit_chat_requests_total{outcome="error"}[6h])) / clamp_min(sum(rate(ragkit_chat_requests_total[6h])), 1e-9)
+      - record: ragkit:chat_error_ratio:rate3d
+        expr: sum(rate(ragkit_chat_requests_total{outcome="error"}[3d])) / clamp_min(sum(rate(ragkit_chat_requests_total[3d])), 1e-9)
+
+      - record: ragkit:chat_slow_ratio:rate5m
+        expr: 1 - sum(rate(ragkit_chat_first_output_seconds_bucket{le="5.0"}[5m])) / clamp_min(sum(rate(ragkit_chat_first_output_seconds_count[5m])), 1e-9)
+      - record: ragkit:chat_slow_ratio:rate30m
+        expr: 1 - sum(rate(ragkit_chat_first_output_seconds_bucket{le="5.0"}[30m])) / clamp_min(sum(rate(ragkit_chat_first_output_seconds_count[30m])), 1e-9)
+      - record: ragkit:chat_slow_ratio:rate1h
+        expr: 1 - sum(rate(ragkit_chat_first_output_seconds_bucket{le="5.0"}[1h])) / clamp_min(sum(rate(ragkit_chat_first_output_seconds_count[1h])), 1e-9)
+      - record: ragkit:chat_slow_ratio:rate6h
+        expr: 1 - sum(rate(ragkit_chat_first_output_seconds_bucket{le="5.0"}[6h])) / clamp_min(sum(rate(ragkit_chat_first_output_seconds_count[6h])), 1e-9)
+      - record: ragkit:chat_slow_ratio:rate3d
+        expr: 1 - sum(rate(ragkit_chat_first_output_seconds_bucket{le="5.0"}[3d])) / clamp_min(sum(rate(ragkit_chat_first_output_seconds_count[3d])), 1e-9)
+
+  - name: ragkit-slo-alerts
+    rules:
+      - alert: RagkitAvailabilityBudgetBurnFast
+        expr: ragkit:chat_error_ratio:rate1h > (14.4 * 0.01) and ragkit:chat_error_ratio:rate5m > (14.4 * 0.01)
+        for: 2m
+        labels: { severity: page, slo: availability }
+        annotations:
+          summary: Chat errors are burning the 30-day error budget in about 2 days
+          runbook: Open the Telemetry screen, filter outcome=error, and read the failing stage in a trace.
+      - alert: RagkitAvailabilityBudgetBurnSlow
+        expr: ragkit:chat_error_ratio:rate6h > (6 * 0.01) and ragkit:chat_error_ratio:rate30m > (6 * 0.01)
+        for: 15m
+        labels: { severity: page, slo: availability }
+        annotations:
+          summary: Sustained chat errors are burning the error budget in about 5 days
+      - alert: RagkitAvailabilityBudgetBurnLow
+        expr: ragkit:chat_error_ratio:rate3d > (1 * 0.01) and ragkit:chat_error_ratio:rate6h > (1 * 0.01)
+        for: 1h
+        labels: { severity: ticket, slo: availability }
+        annotations:
+          summary: Chat error rate is above the SLO over three days
+
+      - alert: RagkitLatencyBudgetBurnFast
+        expr: ragkit:chat_slow_ratio:rate1h > (14.4 * 0.05) and ragkit:chat_slow_ratio:rate5m > (14.4 * 0.05)
+        for: 2m
+        labels: { severity: page, slo: latency }
+        annotations:
+          summary: Most answers take longer than 5 s to start
+          runbook: Check model server load, the reranker candidate count, and spans in slow traces.
+      - alert: RagkitLatencyBudgetBurnSlow
+        expr: ragkit:chat_slow_ratio:rate6h > (6 * 0.05) and ragkit:chat_slow_ratio:rate30m > (6 * 0.05)
+        for: 15m
+        labels: { severity: page, slo: latency }
+        annotations:
+          summary: Slow answers are burning the latency budget in about 5 days
+      - alert: RagkitLatencyBudgetBurnLow
+        expr: ragkit:chat_slow_ratio:rate3d > (1 * 0.05) and ragkit:chat_slow_ratio:rate6h > (1 * 0.05)
+        for: 1h
+        labels: { severity: ticket, slo: latency }
+        annotations:
+          summary: Answer latency is above the SLO over three days
+
+  - name: ragkit-health
+    rules:
+      - alert: RagkitDown
+        expr: up{job="ragkit"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: The ragkit API is not answering scrapes
+      - alert: RagkitHttpErrors
+        expr: sum(rate(ragkit_http_requests_total{status_class="5xx"}[5m])) / clamp_min(sum(rate(ragkit_http_requests_total[5m])), 1e-9) > 0.05
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: More than 5 % of API requests fail with a server error
+      - alert: RagkitModelServerErrors
+        expr: sum(rate(ragkit_chat_errors_total{stage=~"embed|generate|condense|reformulate"}[10m])) > 0.1
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: Model server calls are failing; check Ollama or the OpenAI-compatible endpoint
+      - alert: RagkitBuildFailed
+        expr: increase(ragkit_build_jobs{status="failed"}[30m]) > 0
+        labels: { severity: ticket }
+        annotations:
+          summary: A chatbot build failed; open Builds for the failing stage and documents

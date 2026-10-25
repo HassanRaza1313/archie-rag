@@ -1,0 +1,39 @@
+# Secrets and local state
+.env
+.ragkit/
+*.db
+*.db-wal
+*.db-shm
+
+# Documents: only the public sample corpus is committed
+data/sources/*
+!data/sources/sample/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Editors and tools
+.idea/
+.vscode/
+.claude/
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+
+# Design-process working files (DESIGN.md records the system)
+.impeccable/
+
+# Private specification drafts
+docs/spec/

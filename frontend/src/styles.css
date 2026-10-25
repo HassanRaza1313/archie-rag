@@ -1,0 +1,146 @@
+@import "@fontsource-variable/hanken-grotesk";
+@import "@fontsource-variable/jetbrains-mono";
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Gallery Labels. Gallery-white walls, ink text, a navigation rail painted oxblood, and the label as the signature:
+ * a small card with a 3px oxblood rule. State colours appear only where they carry meaning.
+ * Every text pairing below meets WCAG AA (body >= 4.5:1).
+ */
+@theme {
+  --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  --text-xs: 0.8125rem; /* 13 */
+  --text-xs--line-height: 1.35;
+  --text-sm: 0.9375rem; /* 15 */
+  --text-sm--line-height: 1.5;
+  --text-base: 1.125rem; /* 18 */
+  --text-base--line-height: 1.45;
+  --text-lg: 1.5rem; /* 24 */
+  --text-lg--line-height: 1.25;
+  --text-xl: 2.125rem; /* 34 */
+  --text-xl--line-height: 1.12;
+  --text-2xl: 3rem; /* 48 */
+  --text-2xl--line-height: 1.04;
+
+  --color-wall: #fbfbfa;
+  --color-panel: #ffffff;
+  --color-plinth: #f1f2f3;
+  --color-rule: #e3e5e8;
+  --color-rule-strong: #c9cdd3;
+  --color-ink: #23272e;
+  --color-slate: #56616d;
+  --color-rail: #5c1622;
+  --color-rail-ink: #ffffff;
+  --color-rail-muted: #e7cfd3;
+  --color-rail-active: #7d2633;
+  --color-rail-ok: #7fd1a4;
+  --color-rail-bad: #ff9b8f;
+  --color-accent: #7a1f2b;
+  --color-accent-hover: #64161f;
+  --color-accent-ink: #ffffff;
+  --color-accent-soft: #f7e9eb;
+  --color-ok: #1f6b46;
+  --color-ok-soft: #e8f3ec;
+  --color-warn: #8a4f00;
+  --color-warn-soft: #fdf3e1;
+  --color-bad: #b42318;
+  --color-bad-soft: #fdecea;
+}
+
+.dark {
+  --color-wall: #15171a;
+  --color-panel: #1c1f23;
+  --color-plinth: #24282d;
+  --color-rule: #30353c;
+  --color-rule-strong: #454c55;
+  --color-ink: #eceef1;
+  --color-slate: #a7b0ba;
+  --color-rail: #3a0d15;
+  --color-rail-muted: #d9b9be;
+  --color-rail-active: #5c1622;
+  --color-accent: #e8798a;
+  --color-accent-hover: #f08f9e;
+  --color-accent-ink: #15171a;
+  --color-accent-soft: #3a1a20;
+  --color-ok: #7fd1a4;
+  --color-ok-soft: #12261b;
+  --color-warn: #f3c068;
+  --color-warn-soft: #2b1f0a;
+  --color-bad: #ff9b8f;
+  --color-bad-soft: #2d1210;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-wall text-ink font-sans text-sm antialiased;
+  font-feature-settings: "ss01", "cv11";
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+input,
+textarea {
+  caret-color: var(--color-accent);
+}
+
+* {
+  scrollbar-color: var(--color-rule-strong) transparent;
+  scrollbar-width: thin;
+}
+
+dialog::backdrop {
+  background: rgb(20 22 26 / 0.45);
+}
+
+a {
+  text-underline-offset: 3px;
+}
+
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+.streaming-caret::after {
+  content: "▍";
+  margin-left: 1px;
+  color: var(--color-accent);
+  animation: caret 1s step-end infinite;
+}
+
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.settle {
+  animation: settle 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .streaming-caret::after,
+  .settle {
+    animation: none;
+  }
+}

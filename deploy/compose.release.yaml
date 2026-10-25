@@ -1,0 +1,14 @@
+# Use published images instead of building: `./scripts/rag.sh up --release`.
+# Set RAG_IMAGE_OWNER (GitHub user or org) and optionally RAG_VERSION in .env.
+x-release-api: &release-api
+  image: ghcr.io/${RAG_IMAGE_OWNER:?set RAG_IMAGE_OWNER in .env}/ragkit-api:${RAG_VERSION:-latest}
+  build: !reset null
+  pull_policy: always
+
+services:
+  api: *release-api
+  worker: *release-api
+  ui:
+    image: ghcr.io/${RAG_IMAGE_OWNER:?set RAG_IMAGE_OWNER in .env}/ragkit-ui:${RAG_VERSION:-latest}
+    build: !reset null
+    pull_policy: always

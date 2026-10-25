@@ -1,0 +1,15 @@
+**/.venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+frontend/dist
+.ragkit
+.env
+.git
+.claude
+data
+docs
+backend/tests

@@ -1,0 +1,11 @@
+# GPU override for the bundled Ollama (NVIDIA Container Toolkit on Linux, Docker Desktop + WSL2 on Windows).
+# macOS: Docker has no GPU access; run Ollama natively instead.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
