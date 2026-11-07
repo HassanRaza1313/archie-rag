@@ -2,7 +2,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type Trace } from "../lib/api";
 import { formatMs } from "../lib/format";
-import { Badge, ErrorNote, GalleryLabel, Skeleton, StatusBadge } from "./ui";
+import { Badge, ErrorNote, Skeleton, SourceCard, StatusBadge } from "./ui";
 
 const FUNNEL: [string, string][] = [
   ["dense", "Found by meaning"],
@@ -91,7 +91,7 @@ export function TraceView({ trace }: { trace: Trace }) {
   const facts: [string, string][] = [
     ["Total time", formatMs(trace.total_ms)],
     ["First words after", formatMs(trace.ttft_ms)],
-    ["Confidence", trace.confidence === null ? "–" : `${Math.round(trace.confidence * 100)}%`],
+    ["Best match", trace.confidence === null ? "–" : `${Math.round(trace.confidence * 100)}%`],
     ["Rephrased searches", String(trace.retries)],
     [
       "Tokens in → out",
@@ -147,7 +147,7 @@ export function TraceView({ trace }: { trace: Trace }) {
         <Section title="Best passages it considered">
           <ol className="space-y-2">
             {trace.data.candidates.map((candidate) => (
-              <GalleryLabel
+              <SourceCard
                 as="li"
                 key={candidate.chunk_id}
                 mark={`#${candidate.rank} · ${Math.round(candidate.relevance * 100)}% relevant`}
@@ -158,14 +158,14 @@ export function TraceView({ trace }: { trace: Trace }) {
                   meaning rank {candidate.dense_rank ?? "–"} · keyword rank {candidate.keyword_rank ?? "–"}
                 </span>
                 {candidate.text && <span className="mt-1 line-clamp-3 block text-ink">{candidate.text}</span>}
-              </GalleryLabel>
+              </SourceCard>
             ))}
           </ol>
         </Section>
       )}
       {trace.data.prompt && (
         <Section title="Exact prompt sent to the AI">
-          <pre className="max-h-80 overflow-auto rounded-lg bg-plinth p-3 font-mono text-xs whitespace-pre-wrap">
+          <pre className="max-h-80 overflow-auto rounded-[var(--radius-group)] bg-plinth p-3 font-mono text-xs whitespace-pre-wrap">
             {trace.data.prompt}
           </pre>
         </Section>

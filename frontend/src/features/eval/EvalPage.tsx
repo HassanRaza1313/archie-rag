@@ -2,14 +2,14 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Button, cn, ErrorNote, Input, PageHeader, Select, Stat, TextArea } from "../../components/ui";
+import { Button, cn, ErrorNote, Group, Input, PageHeader, Row, Select, TextArea } from "../../components/ui";
 import { api, type EvalReport } from "../../lib/api";
 import { formatMs, formatPercent, relativeTime } from "../../lib/format";
 
-type Row = { id: string; question: string; expected: string };
+type QuestionRow = { id: string; question: string; expected: string };
 type Run = EvalReport & { runId: number; ranAt: number };
 
-const SAMPLE: Row[] = [
+const SAMPLE: QuestionRow[] = [
   {
     id: crypto.randomUUID(),
     question: "What ratio of browns to greens should a compost pile have?",
@@ -109,7 +109,7 @@ function best(runs: Run[], metric: (typeof METRICS)[number]): number | null {
 export function EvalPage() {
   const { kbId = "" } = useParams();
   const versions = useQuery({ queryKey: ["versions", kbId], queryFn: () => api.versions(kbId) });
-  const [rows, setRows] = useState<Row[]>(SAMPLE);
+  const [rows, setRows] = useState<QuestionRow[]>(SAMPLE);
   const [version, setVersion] = useState("");
   const [runs, setRuns] = useState<Run[]>(() => loadRuns(kbId));
   const [fileError, setFileError] = useState<string | null>(null);
@@ -136,16 +136,16 @@ export function EvalPage() {
       setRuns((current) => [{ ...report, runId: Date.now(), ranAt: Date.now() / 1000 }, ...current].slice(0, 6)),
   });
   const latest = runs[0];
-  const update = (id: string, change: Partial<Row>) =>
+  const update = (id: string, change: Partial<QuestionRow>) =>
     setRows((current) => current.map((row) => (row.id === id ? { ...row, ...change } : row)));
 
   return (
     <>
       <PageHeader
-        title="Evaluate"
+        title="Quality"
         description="Check whether Archie finds the right document for questions you know the answer to. Compare settings versions before you keep a change."
       />
-      <div className="grid gap-12 px-5 pb-16 md:px-10 xl:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
+      <div className="grid gap-12 px-5 pb-16 md:px-8 xl:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
         <section aria-labelledby="questions">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 id="questions" className="text-lg font-semibold">
@@ -184,7 +184,7 @@ export function EvalPage() {
             {rows.map((row, index) => (
               <li
                 key={row.id}
-                className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-lg border border-rule bg-panel p-3"
+                className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-[var(--radius-group)] bg-panel shadow-[0_0_0_0.5px_var(--color-rule)] p-3"
               >
                 <label className="sr-only" htmlFor={`q-${index}`}>
                   Question {index + 1}
@@ -252,31 +252,30 @@ export function EvalPage() {
             Results
           </h2>
           {!latest && (
-            <p className="max-w-md border-t border-rule pt-5 text-sm text-slate">
+            <p className="max-w-md text-sm text-slate">
               Results appear here. Run the same questions against two settings versions to see which finds the right
               documents more often.
             </p>
           )}
           {latest && (
             <>
-              <div className="grid grid-cols-2 gap-x-8 gap-y-5 md:grid-cols-3">
+              <Group title="Results">
                 {METRICS.map((metric) => (
-                  <Stat
-                    key={metric.key}
-                    label={metric.label}
-                    value={metric.format(latest.metrics[metric.key])}
-                    hint={metric.hint}
-                  />
+                  <Row key={metric.key} label={metric.label} detail={metric.hint}>
+                    <span className="font-medium text-ink tabular-nums">
+                      {metric.format(latest.metrics[metric.key])}
+                    </span>
+                  </Row>
                 ))}
-              </div>
+              </Group>
               {latest.warnings.map((warning) => (
                 <p key={warning} className="text-sm text-warn">
                   {warning}
                 </p>
               ))}
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto rounded-[var(--radius-group)] bg-panel px-4 shadow-[0_0_0_0.5px_var(--color-rule)]">
                 <table className="w-full text-left text-sm">
-                  <caption className="mb-2 text-left font-semibold">Each question</caption>
+                  <caption className="pt-3 pb-1 text-left text-sm font-semibold text-slate">Each question</caption>
                   <thead className="border-b border-rule text-xs text-slate">
                     <tr>
                       <th className="py-2 pr-4 font-semibold">Question</th>

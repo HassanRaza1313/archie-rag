@@ -80,15 +80,16 @@ Schema and the frontend renders the setup pages from it. Adding a field in Pytho
 
 | Stage (⟳ = requires rebuild) | Essentials | Advanced |
 |---|---|---|
-| Source ⟳ | type (local folder ★ / uploads), folder, file types (.pdf .md .txt) | include/exclude globs, recursive |
-| Parsing ⟳ | OCR (auto ★ / off / force), tables (markdown ★ / off) | strip running headers/footers |
-| Chunking ⟳ | strategy (structure ★ / fixed), size 512 tokens, overlap 12 % | section path in embedding text |
-| Embedding ⟳ | provider (ollama ★ / openai), model (nomic-embed-text) | batch size 32 |
+| Source ⟳ | type (local folder ★ / uploads), folder, file types (.pdf .md .txt .html .docx .pptx .xlsx) | include/exclude globs, recursive |
+| Parsing ⟳ | reader (auto ★ / fast / layout), OCR (auto ★ / off / force), tables (markdown ★ / off) | strip running headers/footers |
+| Chunking ⟳ | strategy (auto ★ / structure / sections / slides / rows / fixed), size 512 tokens, overlap 12 % | section path in embedding text |
+| Enrichment ⟳ | context per chunk, likely questions, keywords (all off ★), provider, model | document excerpt 3000 tokens, 4 parallel calls |
+| Embedding ⟳ | provider (ollama ★ / openai / fastembed), model (nomic-embed-text) | batch size 32 |
 | Index ⟳ | – | HNSW m 16, ef_construct 128, int8 quantization |
 | Retrieval | mode (hybrid ★ / dense / keyword), candidates 20 | search ef 64, filterable fields |
 | Fusion | rrf ★ / dbsf | RRF k 60 |
 | Reranking | enabled, model (MiniLM-L-6 ★), final chunks 6 | minimum relevance 0.2 |
-| Context | token budget 3000, dedup on | near-duplicate threshold 0.85, compression (off ★ / extractive) |
+| Context | token budget 3000, dedup on, surrounding text (neighbors ★ / section / off) | near-duplicate threshold 0.85, compression (off ★ / extractive) |
 | Agent | max retries 1, confidence threshold 0.35, answer check (citations ★ / llm / off) | strategies (rewrite, broaden, decompose), on fail (flag ★ / abstain), abstain message |
 | Generation | provider, model (qwen3.5:9b), temperature 0.1, system prompt | prompt template, max tokens, context window, thinking |
 | Cache & memory | answer cache, conversation memory | paraphrase matching + threshold 0.95, cache 25 / history 100, turns 6 |
@@ -105,17 +106,23 @@ edits apply on the next request. `query_fingerprint()` scopes the answer cache.
 
 ## 5. Build pipeline (`jobs.py`)
 
-`validate → provision → discover → parse → chunk → embed → index → reconcile → smoke_test → activate`
+`validate → provision → discover → parse → chunk → enrich → embed → index → reconcile → smoke_test → activate`
 
 - **validate**: source has supported files; the embedding model answers a probe (its dimension sizes the index).
 - **provision**: collection `kb_<id>__<index-fingerprint>` with a named dense vector (cosine, HNSW, optional int8)
   and a BM25 sparse vector (`modifier=idf`); payload indexes in server mode.
 - **discover**: SHA-256 per file; files whose hash is already indexed in this collection are skipped. This makes
   rebuilds incremental and interrupted builds resumable.
-- **parse**: PDFs in a process pool when there are several (CPU-bound); other files in a thread. A broken pool
-  falls back to in-process parsing instead of failing the build.
-- **chunk / embed / index**: batched embeddings; deterministic point ids `uuid5(kb, content_hash, ordinal)`;
-  a changed document's old points are deleted before its new ones are written.
+- **parse**: Markdown, text and HTML in a thread; everything else in worker processes, each file under a time limit
+  (`RAG_PARSE_TIMEOUT_S`, 600 s) and on Linux/macOS a memory limit (`RAG_PARSE_MEMORY_MB`). A file that hangs is
+  skipped and the pool restarted; when a worker crashes, the files that were running are retried one at a time so
+  only the culprit fails; if worker processes cannot run at all on the host, parsing falls back to in-process.
+- **chunk**: hand edits from the Documents page are applied (while the file is unchanged); passages identical to
+  one already indexed from another file in this build are skipped and counted.
+- **enrich** (optional): see 5.3.
+- **embed / index**: batched embeddings; deterministic point ids `uuid5(kb, content_hash, ordinal)`; a changed
+  document's old points are deleted before its new ones are written. Each document gets a report (reader,
+  template, layout hints, warnings, duplicates, edits, a 0–1 parse-quality score) shown on the Documents page.
 - **reconcile**: deletes documents removed from the source.
 - **smoke_test**: three searches built from indexed chunks must return results.
 - **activate**: atomically points the chatbot at the new collection and drops the previous one. Chat keeps using
@@ -125,7 +132,20 @@ Honest statuses: `completed`, `completed_with_errors` (some documents failed; li
 `failed` (nothing indexed, smoke test failed, or a fatal error), `cancelled`. Per-stage counts (in, out, skipped,
 failed), timings and throughput are recorded and streamed to the UI.
 
-### 5.1 Parsing (`parsing.py`)
+### 5.1 Parsing (`parsing.py`, `layout.py`)
+Two readers. The **fast reader** is described below. The **layout reader** (`layout.py`, the optional `layout`
+extra) is Docling (MIT): a page-layout model classifies titles, headings, paragraphs, lists, tables, captions and
+page furniture; TableFormer rebuilds table structure; scanned pages are OCR'd; DOCX, PPTX and XLSX are read
+natively (PowerPoint speaker notes are added per slide). Docling's output maps onto the same blocks, so chunking
+and everything after it is unchanged.
+
+`reader: auto` (default) sends Office files to the layout reader, and PDFs to it only when the fast reader flags
+them: a page where at least a quarter of the lines contain a gap wider than four font sizes (text columns, or a
+borderless table), or scanned pages. Simple PDFs stay on the fast reader, which is about 100× faster on CPU. If the
+layout extra is missing or fails on a file, the fast result is kept with a warning. HTML always uses a built-in
+reader (stdlib), which skips navigation, scripts and other page chrome.
+
+The fast reader:
 - **Text**: pdfium (pypdfium2, Apache-2.0/BSD) per character: size, weight, position. About 50 ms per page on the
   test machine, versus about 335 ms with pdfminer layout analysis.
 - **Headings**: lines ≥ 1.18 × body size, or bold, standalone, title-case lines at body size (books often mark
@@ -146,6 +166,21 @@ sentences, then words; overlap = whole trailing sentences (≈ overlap %) inside
 (page span kept) but not sections, except tiny sections, which merge forward. Tables are separate chunks; large tables
 split by rows with the header repeated. The embedded text is prefixed with `document title › section path`.
 `fixed`: equal windows with overlap, snapped to word boundaries.
+
+Templates are presets over the structure chunker for shapes where its defaults hurt: `sections` never merges small
+sections (FAQs, numbered clauses), `slides` splits at every slide or page, `rows` cuts tables into small row groups
+with the header repeated (spreadsheets). `auto` (default) picks per document: `rows` for spreadsheets, `slides`
+for presentations, `sections` when most headings are questions or numbered clauses, the structure chunker without
+the references list for papers (Abstract + References headings), and `structure` otherwise.
+
+### 5.3 Enrichment (`enrichment.py`)
+Optional and off by default because it needs a chat model at build time. For each chunk the model sees the
+document (or its opening plus the text around the chunk, within `document_tokens`) and returns JSON with any of:
+a sentence situating the chunk in its document (contextual retrieval), up to three questions it answers, and up to
+six keywords including synonyms. These are prepended to the chunk's embedded and BM25 text, never to the text
+shown or sent to the answering model. Results are cached by content, model and prompt version, so rebuilding
+unchanged documents makes no calls; a malformed reply leaves that chunk unenriched rather than failing the build.
+Validation warns about the cost (one call per chunk, estimated from the last build).
 
 ## 6. Query path: the bounded agent (`agent.py`)
 
@@ -187,7 +222,9 @@ LLM calls per request are capped: condense ≤ 1, decompose ≤ 1, rewrite ≤ m
 4. Relevance floor, then dedup (exact hash + 5-gram Jaccard), optional extractive compression (keep the first
    sentence and every sentence sharing a keyword with the question), then the token budget (skip, don't stop, on
    oversized chunks).
-5. Confidence = top relevance, +0.05 when two of the top three come from the same section.
+5. Small-to-big expansion: each selected chunk is widened with its neighbouring chunks (or its whole section),
+   best hit first, while the token budget allows; the chunker's repeated overlap is removed when joining.
+6. Confidence = top relevance, +0.05 when two of the top three come from the same section.
 
 ### 6.2 Prompt and privacy
 Sources are delimited and labelled as reference data, not instructions. Redaction (§7) applies to sources sent
@@ -267,6 +304,8 @@ exporter can be added without touching call sites.
 | `DELETE /api/kbs/{id}/sessions/{sid}` | Forget a conversation |
 | `GET /api/traces`, `GET /api/traces/{id}`, `GET /api/kbs/{id}/stats` | Telemetry |
 | `GET /api/kbs/{id}/suggestions` | Starter questions drawn from the indexed sections |
+| `GET /api/kbs/{id}/documents`, `GET …/documents/chunks?uri=` | Per-document reports; a document's chunks in order |
+| `PATCH …/documents/chunks`, `DELETE …/documents/chunks?uri=&ordinal=` | Edit or exclude a chunk (re-embedded at once); undo |
 | `GET /api/slo?kb_id=` | SLO status, error budget and firing alerts |
 | `GET /metrics` | Prometheus exposition (needs the API key when one is set) |
 | `POST /api/kbs/{id}/eval` | Golden-set evaluation for a version |
@@ -276,21 +315,26 @@ OpenAPI docs at `/docs`. Streams are SSE over `fetch`, so they work with POST bo
 ## 10. Frontend
 
 React 19 + TypeScript (strict) + Vite + Tailwind 4; TanStack Query for server state; native `<dialog>`, `<select>`
-and switch-role buttons instead of a component library; CSS bars instead of a chart library. The visual language
-("Gallery Labels") is recorded in [DESIGN.md](DESIGN.md): gallery-white walls, an oxblood navigation rail, and the
-museum label as the signature for every source. Self-hosted Hanken Grotesk and JetBrains Mono, light and dark
-themes from CSS tokens, responsive down to phone width (off-canvas rail). Copy is written for non-technical users.
+and switch-role buttons instead of a component library; CSS bars instead of a chart library. The visual language,
+recorded in [DESIGN.md](DESIGN.md), is a Mac app for your documents: platform type (SF Pro, Segoe UI Variable),
+a translucent source-list sidebar of chatbots, inset grouped sections, segmented controls and sheets, one accent
+(Archie wine) for actions and selection only, and Quick Look for sources. Light and dark themes (or follow the
+system) from CSS tokens, responsive down to phone width (the sidebar slides in), reduced motion keeps only fades.
+Copy is written for non-technical users. Each chatbot has two places: **Ask**, and **Manage** with five tabs.
 
 | Route | Screen |
 |---|---|
-| `/` | Chatbots: each with its next step (Ask, Continue setup, Watch the build, Rebuild, See what went wrong) |
-| `/new` | Guided creation: name, documents (folder or upload), answer style, then create and build |
-| `/health` | SLOs in plain words, error budget, anything that needs attention |
-| `/kb/:id/ask` | Streaming answers, citation chips, source labels in the margin, "How Archie found this" trace |
-| `/kb/:id/setup` | Schema-driven settings grouped by what a change costs, inline validation, presets |
-| `/kb/:id/builds[/:job]` | Live build timeline, outcome, technical details, earlier builds |
-| `/kb/:id/evaluate` | Test questions, plain-named metrics, runs compared across versions |
-| `/kb/:id/activity` | Every question, its outcome, time and confidence, with the full trace |
+| `/` | Welcome and Continue on first run; afterwards opens the chatbot used last |
+| `/new` | Setup assistant, one decision per screen: name, documents (folder or upload), answer style; Create builds and opens Ask |
+| `/status` | SLOs in plain words, error budget, anything that needs attention |
+| `/kb/:id/ask` | Build progress until the first build finishes, then suggested questions, streaming answers, citation chips, source cards, Quick Look, "How Archie found this" trace |
+| `/kb/:id/manage/documents` | How each file was read and split, files most likely misread first; edit or exclude passages |
+| `/kb/:id/manage/settings` | Schema-driven settings grouped by what a change costs, inline validation, presets, delete chatbot |
+| `/kb/:id/manage/builds[/:job]` | Live build steps, outcome, technical details, history |
+| `/kb/:id/manage/quality` | Test questions, plain-named results, runs compared across versions |
+| `/kb/:id/manage/activity` | Every question, its outcome, time and best match, with the full trace |
+
+Older links (`/health`, `/kb/:id/setup`, `/builds`, `/evaluate`, `/activity`, `/documents`, `/chat`) redirect.
 
 ## 11. Performance (measured on the development laptop, CPU only)
 
@@ -301,6 +345,7 @@ themes from CSS tokens, responsive down to phone width (off-canvas rail). Copy i
 | Reranking 30 chunks of ~400 tokens | MiniLM-L-6: 2.0 s · bge-reranker-base: 14.4 s |
 | Reranker discrimination (relevant / irrelevant) | MiniLM 0.965 / 0.000 · bge 0.979 / 0.000 |
 | UI bundle | 130 KB gzipped |
+| Ingestion benchmark (`bench/`, 9 hard documents, 30 questions) | passage found first: 63 % with the original pipeline, 96 % with the new defaults (setup.md) |
 
 Levers: candidates per retriever (reranking cost is linear), the reranker model, a GPU (`compose.gpu.yaml`, or
 an OpenAI-compatible GPU server), server-mode Qdrant with HNSW for large corpora, and the answer cache.

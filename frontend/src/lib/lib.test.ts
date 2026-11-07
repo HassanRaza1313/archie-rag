@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { loadConversation } from "../features/chat/ChatPage";
+import { unseenBuild } from "../components/Layout";
+import { centreOf, loadConversation, originWithin, passageParts } from "../features/chat/ChatPage";
 import { splitCitations } from "../features/chat/citations";
+import { qualityVerdict, TEMPLATES } from "../features/documents/DocumentsPage";
 import { parseGolden } from "../features/eval/EvalPage";
-import { nextAction } from "../features/kbs/HomePage";
+import { openingChatbot } from "../features/kbs/HomePage";
 import { rangeProblem } from "../features/setup/SchemaField";
 import { type JsonSchema, type KbStatus, type KnowledgeBase, parseSseBlock, readSse } from "./api";
 import { formatMs, formatPercent, pages, relativeTime } from "./format";
@@ -227,10 +229,10 @@ describe("setup journey", () => {
   });
 });
 
-describe("home", () => {
-  const kb = (status: KbStatus) =>
+describe("home and sidebar", () => {
+  const kb = (id: string, status: KbStatus, last_job: KnowledgeBase["last_job"] = null) =>
     ({
-      id: "kb_1",
+      id,
       name: "Handbook",
       status,
       created_at: 0,
@@ -239,15 +241,58 @@ describe("home", () => {
       documents: 0,
       chunks: 0,
       active_job: null,
-      last_job: null,
+      last_job,
     }) as KnowledgeBase;
 
-  it("offers the next step each status calls for", () => {
-    expect(nextAction(kb("ready"))).toEqual({ label: "Ask", to: "/kb/kb_1/ask" });
-    expect(nextAction(kb("draft")).label).toBe("Continue setup");
-    expect(nextAction(kb("building")).to).toBe("/kb/kb_1/builds");
-    expect(nextAction(kb("stale")).label).toBe("Rebuild");
-    expect(nextAction(kb("failed")).label).toBe("See what went wrong");
+  it("opens the chatbot used last, or the first one", () => {
+    const list = [kb("a", "ready"), kb("b", "draft")];
+    expect(openingChatbot(list, "b")?.id).toBe("b");
+    expect(openingChatbot(list, "gone")?.id).toBe("a");
+    expect(openingChatbot([], null)).toBeUndefined();
+  });
+
+  it("keeps a finished build lit until it has been seen", () => {
+    const done = kb("a", "ready", { id: "job_2", status: "completed" });
+    expect(unseenBuild(done, "job_1")).toBe(true);
+    expect(unseenBuild(done, "job_2")).toBe(false);
+    expect(unseenBuild(kb("a", "building", { id: "job_3", status: "running" }), null)).toBe(false);
+    expect(unseenBuild(kb("a", "draft"), null)).toBe(false);
+  });
+});
+
+describe("quick look", () => {
+  it("reads markdown tables in a passage as tables", () => {
+    const text = "Greens and browns.\n| Material | Type |\n| --- | --- |\n| Peelings | Green |\nTurn weekly.";
+    expect(passageParts(text)).toEqual([
+      { kind: "text", text: "Greens and browns." },
+      {
+        kind: "table",
+        rows: [
+          ["Material", "Type"],
+          ["Peelings", "Green"],
+        ],
+      },
+      { kind: "text", text: "Turn weekly." },
+    ]);
+    expect(passageParts("Just prose.")).toEqual([{ kind: "text", text: "Just prose." }]);
+    const glued = "Add greens. | Material | Type | Notes |\n| --- | --- | --- |\n| Peelings | Green | Chop |";
+    expect(passageParts(glued)).toEqual([
+      { kind: "text", text: "Add greens." },
+      {
+        kind: "table",
+        rows: [
+          ["Material", "Type", "Notes"],
+          ["Peelings", "Green", "Chop"],
+        ],
+      },
+    ]);
+  });
+
+  it("grows from the centre of what opened it, measured inside its own box", () => {
+    const chip = { getBoundingClientRect: () => ({ left: 100, top: 300, width: 40, height: 20 }) } as Element;
+    const centre = centreOf(chip);
+    expect(centre).toEqual({ x: 120, y: 310 });
+    expect(originWithin(centre, { left: 400, top: 200 })).toBe("-280px 110px");
   });
 });
 
@@ -275,5 +320,15 @@ describe("chat transcript", () => {
     expect(loadConversation("kb_none").messages).toEqual([]);
     sessionStorage.setItem("archie.chat.kb_bad", "{not json");
     expect(loadConversation("kb_bad").sessionId).toMatch(/[0-9a-f-]{36}/);
+  });
+});
+
+describe("documents", () => {
+  it("turns a parse-quality score into plain words", () => {
+    expect(qualityVerdict(0.95)).toEqual({ tone: "ok", text: "Read well" });
+    expect(qualityVerdict(0.7).text).toBe("Worth a look");
+    expect(qualityVerdict(0.2).tone).toBe("bad");
+    expect(qualityVerdict(undefined).text).toBe("Not scored");
+    expect(TEMPLATES.rows).toBe("Groups of table rows");
   });
 });

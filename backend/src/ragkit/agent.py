@@ -129,6 +129,7 @@ def source_label(index: int, candidate: Candidate) -> dict[str, Any]:
         "page_end": payload.get("page_end"),
         "relevance": round(candidate.relevance, 3),
         "preview": candidate.text[:400],
+        "text": candidate.text,
     }
 
 

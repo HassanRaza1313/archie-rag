@@ -18,7 +18,7 @@ function Objective({ slo }: { slo: Slo }) {
   const percent = budget === null ? null : Math.max(0, Math.round(budget * 100));
   const tone = slo.met === null ? "text-slate" : slo.met ? "text-ok" : "text-bad";
   return (
-    <section className="border-t border-rule pt-5">
+    <section className="rounded-[var(--radius-group)] bg-panel shadow-[0_0_0_0.5px_var(--color-rule)] px-5 py-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold">{sloTitle(slo)}</h2>
         <span className={cn("text-sm font-semibold", tone)}>
@@ -74,10 +74,7 @@ function AlertRow({ alert, names }: { alert: Alert; names: Map<string, string> }
         {alert.severity === "page" ? "Urgent" : "Look soon"}
       </Badge>
       {alert.kb_id && (
-        <Link
-          to={`/kb/${alert.kb_id}/builds`}
-          className="text-sm font-semibold text-accent underline-offset-4 hover:underline"
-        >
+        <Link to={`/kb/${alert.kb_id}/manage/builds`} className="text-sm font-medium text-accent hover:underline">
           Open
         </Link>
       )}
@@ -92,12 +89,12 @@ export function HealthPage() {
   const firing = report.data?.alerts.filter((alert) => alert.state === "firing") ?? [];
 
   return (
-    <>
+    <div className="min-h-full bg-wall">
       <PageHeader
-        title="Health"
+        title="Status"
         description="Archie's promises to the people asking questions, and anything that needs your attention."
       />
-      <div className="space-y-10 px-5 pb-16 md:px-10">
+      <div className="space-y-8 px-5 pb-16 md:px-8">
         <ErrorNote error={report.error} />
         {report.isLoading && <Skeleton lines={5} />}
         {report.data && (
@@ -110,7 +107,7 @@ export function HealthPage() {
                 <CheckCircle2 className="size-5" aria-hidden /> Nothing needs attention right now.
               </p>
             ) : (
-              <ul className="mt-2 divide-y divide-rule border-y border-rule">
+              <ul className="mt-2 divide-y divide-rule px-4 rounded-[var(--radius-group)] bg-panel shadow-[0_0_0_0.5px_var(--color-rule)]">
                 {firing.map((alert) => (
                   <AlertRow key={`${alert.name}-${alert.kb_id ?? ""}`} alert={alert} names={names} />
                 ))}
@@ -119,7 +116,7 @@ export function HealthPage() {
           </section>
         )}
         {report.data && (
-          <div className="grid gap-10 lg:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2">
             {report.data.slos.map((slo) => (
               <Objective key={slo.name} slo={slo} />
             ))}
@@ -127,11 +124,11 @@ export function HealthPage() {
         )}
         {report.data?.slos.every((slo) => slo.requests === 0) && (
           <EmptyState title="Nothing measured yet">
-            Health fills in as people ask questions. Detailed metrics are also available to monitoring tools at{" "}
+            Status fills in as people ask questions. Detailed metrics are also available to monitoring tools at{" "}
             <code className="font-mono">/metrics</code>.
           </EmptyState>
         )}
       </div>
-    </>
+    </div>
   );
 }

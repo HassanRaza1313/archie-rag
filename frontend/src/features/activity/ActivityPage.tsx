@@ -2,7 +2,17 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { TracePanel } from "../../components/TracePanel";
-import { Dialog, EmptyState, ErrorNote, PageHeader, Select, Skeleton, Stat, StatusBadge } from "../../components/ui";
+import {
+  Dialog,
+  EmptyState,
+  ErrorNote,
+  Group,
+  PageHeader,
+  Row,
+  Select,
+  Skeleton,
+  StatusBadge,
+} from "../../components/ui";
 import { api } from "../../lib/api";
 import { formatMs, formatPercent, relativeTime } from "../../lib/format";
 
@@ -41,23 +51,23 @@ export function ActivityPage() {
           </Select>
         }
       />
-      <div className="space-y-8 px-5 pb-16 md:px-10">
+      <div className="space-y-8 px-5 pb-16 md:px-8">
         <ErrorNote error={stats.error ?? traces.error} />
         {s && s.requests > 0 && (
-          <div className="grid grid-cols-2 gap-x-8 gap-y-5 md:grid-cols-4">
-            <Stat
-              label="Typical answer time"
-              value={formatMs(s.latency_p50_ms)}
-              hint={`Slowest 5%: ${formatMs(s.latency_p95_ms)}`}
-            />
-            <Stat label="Answered from memory" value={formatPercent(s.cache_hit_rate)} hint="Repeated questions" />
-            <Stat label="Declined to answer" value={formatPercent(s.abstain_rate)} hint="Not in the documents" />
-            <Stat
-              label="Errors"
-              value={formatPercent(s.error_rate)}
-              hint={s.requests === 1 ? "Last question" : `Last ${s.requests} questions`}
-            />
-          </div>
+          <Group title="At a glance" className="max-w-2xl">
+            <Row label="Typical answer time" detail={`Slowest 5%: ${formatMs(s.latency_p95_ms)}`}>
+              {formatMs(s.latency_p50_ms)}
+            </Row>
+            <Row label="Answered from memory" detail="Repeated questions">
+              {formatPercent(s.cache_hit_rate)}
+            </Row>
+            <Row label="Declined to answer" detail="Not in the documents">
+              {formatPercent(s.abstain_rate)}
+            </Row>
+            <Row label="Errors" detail={s.requests === 1 ? "Last question" : `Last ${s.requests} questions`}>
+              {formatPercent(s.error_rate)}
+            </Row>
+          </Group>
         )}
         {traces.isLoading && <Skeleton lines={5} />}
         {traces.data?.length === 0 && (
@@ -66,14 +76,14 @@ export function ActivityPage() {
           </EmptyState>
         )}
         {traces.data && traces.data.length > 0 && (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-[var(--radius-group)] bg-panel shadow-[0_0_0_0.5px_var(--color-rule)] px-4">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-rule text-xs text-slate">
                 <tr>
                   <th className="py-2 pr-4 font-semibold">Question</th>
                   <th className="py-2 pr-4 font-semibold">Outcome</th>
                   <th className="py-2 pr-4 text-right font-semibold">Time</th>
-                  <th className="py-2 pr-4 text-right font-semibold">Confidence</th>
+                  <th className="py-2 pr-4 text-right font-semibold">Best match</th>
                   <th className="py-2 font-semibold">When</th>
                 </tr>
               </thead>

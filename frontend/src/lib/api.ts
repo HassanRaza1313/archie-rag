@@ -62,6 +62,7 @@ export interface Source {
   page_end: number | null;
   relevance: number;
   preview: string;
+  text?: string;
   closest?: boolean;
 }
 
@@ -266,6 +267,43 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const json = (body: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(body) });
 
+export interface DocumentReport {
+  reader?: "fast" | "layout";
+  template?: string | null;
+  pages?: number;
+  ocr_pages?: number;
+  tables?: number;
+  layout_hints?: string[];
+  warnings?: string[];
+  chunks_produced?: number;
+  duplicates?: number;
+  edited?: number;
+  quality?: number;
+}
+
+export interface IndexedDocument {
+  uri: string;
+  content_hash: string;
+  chunk_count: number;
+  indexed_at: number;
+  report: DocumentReport;
+}
+
+export interface DocumentChunk {
+  id: string;
+  ordinal: number;
+  text: string;
+  section: string;
+  page_start: number;
+  page_end: number;
+  content_type: "text" | "table";
+  template: string | null;
+  token_count: number;
+  enrichment: { context: string; questions: string[]; keywords: string[] } | null;
+  excluded: boolean | null;
+  edited: boolean;
+}
+
 export const api = {
   ready: () => request<{ ready: boolean; qdrant: boolean; ollama: boolean }>("/api/system/ready"),
   capabilities: () =>
@@ -310,6 +348,20 @@ export const api = {
   suggestions: (id: string) => request<string[]>(`/api/kbs/${id}/suggestions`),
   slo: (kbId?: string) =>
     request<{ slos: Slo[]; alerts: Alert[] }>(`/api/slo${kbId ? `?kb_id=${encodeURIComponent(kbId)}` : ""}`),
+  documents: (kbId: string) => request<IndexedDocument[]>(`/api/kbs/${kbId}/documents`),
+  documentChunks: (kbId: string, uri: string) =>
+    request<{ uri: string; title: string; chunks: DocumentChunk[] }>(
+      `/api/kbs/${kbId}/documents/chunks?uri=${encodeURIComponent(uri)}`,
+    ),
+  editChunk: (kbId: string, edit: { uri: string; ordinal: number; text?: string; excluded: boolean }) =>
+    request<{ ordinal: number; text: string; excluded: boolean }>(`/api/kbs/${kbId}/documents/chunks`, {
+      method: "PATCH",
+      body: JSON.stringify(edit),
+    }),
+  restoreChunk: (kbId: string, uri: string, ordinal: number) =>
+    request<void>(`/api/kbs/${kbId}/documents/chunks?uri=${encodeURIComponent(uri)}&ordinal=${ordinal}`, {
+      method: "DELETE",
+    }),
   clearSession: (kbId: string, sessionId: string) =>
     request<void>(`/api/kbs/${kbId}/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
 };

@@ -1,8 +1,8 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { FolderOpen, Upload } from "lucide-react";
+import { Check, FolderOpen, Upload } from "lucide-react";
 import { type ReactNode, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Button, cn, ErrorNote, GalleryLabel, Input } from "../../components/ui";
+import { useNavigate } from "react-router-dom";
+import { Button, cn, ErrorNote, Input } from "../../components/ui";
 import { ApiError, api, type Config } from "../../lib/api";
 
 const PRESETS: { name: string; title: string; body: string }[] = [
@@ -11,20 +11,10 @@ const PRESETS: { name: string; title: string; body: string }[] = [
   { name: "low_latency", title: "Fastest", body: "Answers quickly from fewer passages. Good for simple questions." },
 ];
 
-function Step({ index, title, hint, children }: { index: number; title: string; hint: string; children: ReactNode }) {
-  return (
-    <section className="grid gap-4 border-t border-rule py-8 md:grid-cols-[16rem_minmax(0,1fr)] md:gap-10">
-      <div>
-        <h2 className="text-lg font-semibold">
-          {index}. {title}
-        </h2>
-        <p className="mt-1 text-sm text-slate">{hint}</p>
-      </div>
-      <div className="min-w-0">{children}</div>
-    </section>
-  );
-}
+const STEPS = ["Name", "Documents", "Answers"] as const;
+const ACCEPT = ".pdf,.docx,.pptx,.xlsx,.html,.md,.txt";
 
+/** A selectable row in a grouped list, with a checkmark when chosen (as in macOS lists and sheets). */
 function Choice({
   checked,
   onSelect,
@@ -41,24 +31,22 @@ function Choice({
   name: string;
 }) {
   return (
-    <label
-      className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3.5 transition-colors duration-150",
-        checked ? "border-accent bg-accent-soft" : "border-rule-strong bg-panel hover:border-slate",
+    <label className="flex cursor-default items-center gap-3.5 px-4 py-3 hover:bg-plinth/60 has-[:focus-visible]:bg-accent-soft">
+      <input type="radio" name={name} checked={checked} onChange={onSelect} className="sr-only" />
+      {icon && (
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent [&>svg]:size-[18px]">
+          {icon}
+        </span>
       )}
-    >
-      <input
-        type="radio"
-        name={name}
-        checked={checked}
-        onChange={onSelect}
-        className="mt-1 accent-[var(--color-accent)]"
-      />
-      {icon && <span className="mt-0.5 text-slate [&>svg]:size-5">{icon}</span>}
-      <span>
-        <span className="block font-semibold">{title}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-base font-medium">{title}</span>
         <span className="block text-sm text-slate">{body}</span>
       </span>
+      <Check
+        aria-hidden
+        strokeWidth={2.5}
+        className={cn("size-4 shrink-0 text-accent", checked ? "opacity-100" : "opacity-0")}
+      />
     </label>
   );
 }
@@ -72,6 +60,7 @@ function friendly(error: unknown): string {
 export function NewChatbotPage() {
   const navigate = useNavigate();
   const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: api.capabilities, staleTime: 60_000 });
+  const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [source, setSource] = useState<"folder" | "uploads">("folder");
   const [folder, setFolder] = useState("data/sources/sample");
@@ -105,148 +94,189 @@ export function NewChatbotPage() {
       const blocking = check.errors.filter((e) => e.loc[0] === "source" || then === "build");
       if (blocking.length) {
         setProblems(blocking.map((e) => e.msg));
+        setStep(1);
         return null;
       }
-      if (then === "review") return `/kb/${id}/setup`;
-      const { job_id } = await api.startBuild(id);
-      return `/kb/${id}/builds/${job_id}`;
+      if (then === "review") return `/kb/${id}/manage/settings`;
+      await api.startBuild(id);
+      return `/kb/${id}/ask`;
     },
     onSuccess: (to) => to && navigate(to),
   });
 
-  const ready = name.trim().length > 0 && (source === "folder" ? folder.trim().length > 0 : files.length > 0);
   const roots = capabilities.data?.data_roots ?? [];
+  const valid = [name.trim().length > 0, source === "folder" ? folder.trim().length > 0 : files.length > 0, true];
+  const last = step === STEPS.length - 1;
 
   return (
-    <div className="px-5 pt-8 pb-16 md:px-10 md:pt-10">
-      <Link to="/" className="text-sm text-slate hover:text-ink">
-        ← Your chatbots
-      </Link>
-      <h1 className="mt-4 text-xl font-semibold tracking-tight">Create a chatbot</h1>
-      <p className="mt-2 max-w-2xl text-sm text-slate">
-        Three choices, then Archie reads your documents. You can change everything later in Setup.
-      </p>
-
+    <div className="flex min-h-full items-start justify-center bg-wall px-4 py-10 md:items-center">
       <form
-        className="mt-6 max-w-5xl"
+        className="settle w-full max-w-xl rounded-[var(--radius-sheet)] bg-panel px-6 pt-8 pb-6 shadow-[0_0_0_0.5px_var(--color-rule),0_10px_40px_rgb(0_0_0/0.08)] md:px-10"
         onSubmit={(event) => {
           event.preventDefault();
-          if (ready) go.mutate("build");
+          if (!valid[step]) return;
+          if (last) go.mutate("build");
+          else setStep(step + 1);
         }}
       >
-        <Step index={1} title="Name it" hint="Use a name people will recognise.">
-          <label htmlFor="name" className="sr-only">
-            Chatbot name
-          </label>
-          <Input
-            id="name"
-            autoFocus
-            value={name}
-            maxLength={80}
-            placeholder="Team handbook"
-            onChange={(e) => setName(e.target.value)}
-            className="max-w-md"
-          />
-        </Step>
-
-        <Step index={2} title="Choose documents" hint="PDF, Markdown and text files work. Scanned PDFs need OCR.">
-          <fieldset className="grid gap-3 sm:grid-cols-2">
-            <legend className="sr-only">Where the documents are</legend>
-            <Choice
-              name="source"
-              checked={source === "folder"}
-              onSelect={() => setSource("folder")}
-              icon={<FolderOpen />}
-              title="A folder Archie can read"
-              body="Documents already on the computer or server running Archie."
-            />
-            <Choice
-              name="source"
-              checked={source === "uploads"}
-              onSelect={() => setSource("uploads")}
-              icon={<Upload />}
-              title="Upload files"
-              body="Pick files from this device. Good for a handful of documents."
-            />
-          </fieldset>
-          {source === "folder" ? (
-            <div className="mt-4 max-w-xl">
-              <label htmlFor="folder" className="text-sm font-semibold">
-                Folder
-              </label>
-              <Input
-                id="folder"
-                className="mt-1.5 font-mono"
-                value={folder}
-                onChange={(e) => setFolder(e.target.value)}
-              />
-              <p className="mt-1.5 text-xs text-slate">
-                {roots.length
-                  ? `Archie may read folders inside: ${roots.join(", ")}.`
-                  : "Archie may only read folders its administrator has allowed."}
-              </p>
-            </div>
-          ) : (
-            <div className="mt-4">
-              <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-rule-strong bg-panel px-4 text-sm font-semibold hover:border-ink">
-                <Upload className="size-4" aria-hidden /> Choose files
-                <input
-                  type="file"
-                  multiple
-                  accept=".pdf,.md,.txt"
-                  className="sr-only"
-                  onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-                />
-              </label>
-              {files.length > 0 && (
-                <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {files.map((file) => (
-                    <GalleryLabel as="li" key={file.name} title={file.name}>
-                      {(file.size / 1024).toFixed(0)} KB
-                    </GalleryLabel>
-                  ))}
-                </ul>
+        <ol className="flex justify-center gap-2" aria-label="Steps">
+          {STEPS.map((label, index) => (
+            <li
+              key={label}
+              aria-current={index === step ? "step" : undefined}
+              className={cn(
+                "h-1.5 rounded-full transition-all duration-300 ease-[var(--ease-out)]",
+                index === step ? "w-6 bg-accent" : "w-1.5 bg-rule-strong",
               )}
-            </div>
-          )}
-        </Step>
+            >
+              <span className="sr-only">
+                Step {index + 1} of {STEPS.length}: {label}
+              </span>
+            </li>
+          ))}
+        </ol>
 
-        <Step index={3} title="How should it answer?" hint="A starting point. Every setting can be tuned later.">
-          <fieldset className="grid gap-3">
-            <legend className="sr-only">Answer style</legend>
-            {PRESETS.map((item) => (
+        {step === 0 && (
+          <div className="mt-8 text-center">
+            <h1 className="font-display text-2xl font-bold tracking-tight">Name your chatbot</h1>
+            <p className="mx-auto mt-2 max-w-sm text-base text-slate">
+              Choose something people will recognise. You can change everything else later.
+            </p>
+            <label htmlFor="name" className="sr-only">
+              Chatbot name
+            </label>
+            <Input
+              id="name"
+              autoFocus
+              value={name}
+              maxLength={80}
+              placeholder="Team handbook"
+              onChange={(e) => setName(e.target.value)}
+              className="mx-auto mt-7 h-10 max-w-sm text-center text-lg"
+            />
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="mt-8">
+            <h1 className="text-center font-display text-2xl font-bold tracking-tight">Choose its documents</h1>
+            <p className="mx-auto mt-2 max-w-sm text-center text-base text-slate">
+              PDF, Word, PowerPoint, Excel, HTML, Markdown and text files all work.
+            </p>
+            <fieldset className="mt-7 divide-y divide-rule overflow-hidden rounded-[var(--radius-group)] shadow-[0_0_0_0.5px_var(--color-rule-strong)]">
+              <legend className="sr-only">Where the documents are</legend>
               <Choice
-                key={item.name}
-                name="preset"
-                checked={preset === item.name}
-                onSelect={() => setPreset(item.name)}
-                title={item.name === "balanced" ? `${item.title} (recommended)` : item.title}
-                body={item.body}
+                name="source"
+                checked={source === "folder"}
+                onSelect={() => setSource("folder")}
+                icon={<FolderOpen />}
+                title="A folder Archie can read"
+                body="Documents on the computer or server running Archie."
               />
-            ))}
-          </fieldset>
-        </Step>
+              <Choice
+                name="source"
+                checked={source === "uploads"}
+                onSelect={() => setSource("uploads")}
+                icon={<Upload />}
+                title="Upload files"
+                body="Pick files from this device. Good for a handful of documents."
+              />
+            </fieldset>
+            {source === "folder" ? (
+              <div className="mt-5">
+                <label htmlFor="folder" className="px-1 text-sm font-medium text-slate">
+                  Folder
+                </label>
+                <Input
+                  id="folder"
+                  className="mt-1 font-mono text-sm"
+                  value={folder}
+                  onChange={(e) => setFolder(e.target.value)}
+                />
+                <p className="mt-1.5 px-1 text-xs text-slate">
+                  {roots.length
+                    ? `Archie may read folders inside ${roots.join(", ")}.`
+                    : "Archie may only read folders its administrator has allowed."}
+                </p>
+              </div>
+            ) : (
+              <div className="mt-5">
+                <label className="press inline-flex h-8 cursor-default items-center gap-2 rounded-[var(--radius-control)] bg-panel px-3.5 text-sm font-medium shadow-[0_0_0_0.5px_var(--color-rule-strong),0_1px_1px_rgb(0_0_0/0.06)] hover:bg-plinth">
+                  <Upload className="size-4" aria-hidden /> Choose Files…
+                  <input
+                    type="file"
+                    multiple
+                    accept={ACCEPT}
+                    className="sr-only"
+                    onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+                  />
+                </label>
+                {files.length > 0 && (
+                  <ul className="mt-3 divide-y divide-rule rounded-[var(--radius-group)] bg-wall">
+                    {files.map((file) => (
+                      <li key={file.name} className="flex justify-between gap-3 px-3.5 py-2 text-sm">
+                        <span className="truncate">{file.name}</span>
+                        <span className="shrink-0 text-slate tabular-nums">{(file.size / 1024).toFixed(0)} KB</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
-        <div className="flex flex-col gap-4 border-t border-rule pt-8 md:pl-[calc(16rem+2.5rem)]">
+        {step === 2 && (
+          <div className="mt-8">
+            <h1 className="text-center font-display text-2xl font-bold tracking-tight">How should it answer?</h1>
+            <p className="mx-auto mt-2 max-w-sm text-center text-base text-slate">
+              A starting point. Every setting can be tuned later in Manage.
+            </p>
+            <fieldset className="mt-7 divide-y divide-rule overflow-hidden rounded-[var(--radius-group)] shadow-[0_0_0_0.5px_var(--color-rule-strong)]">
+              <legend className="sr-only">Answer style</legend>
+              {PRESETS.map((item) => (
+                <Choice
+                  key={item.name}
+                  name="preset"
+                  checked={preset === item.name}
+                  onSelect={() => setPreset(item.name)}
+                  title={item.name === "balanced" ? `${item.title} (recommended)` : item.title}
+                  body={item.body}
+                />
+              ))}
+            </fieldset>
+          </div>
+        )}
+
+        <div className="mt-6 space-y-3">
           {problems.length > 0 && (
-            <div role="alert" className="rounded-lg bg-bad-soft px-4 py-3 text-sm text-bad">
+            <div role="alert" className="rounded-[var(--radius-group)] bg-bad-soft px-4 py-3 text-sm text-bad">
               {problems.map((problem) => (
                 <p key={problem}>{problem}</p>
               ))}
             </div>
           )}
           {go.error && <ErrorNote error={friendly(go.error)} />}
-          <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" variant="primary" size="lg" disabled={!ready} busy={go.isPending}>
-              Create and build
-            </Button>
-            <Button size="lg" disabled={!ready || go.isPending} onClick={() => go.mutate("review")}>
-              Review all settings first
+        </div>
+
+        <div className="mt-8 flex items-center justify-between gap-3">
+          <Button
+            variant="ghost"
+            onClick={() => (step === 0 ? navigate(-1) : setStep(step - 1))}
+            disabled={go.isPending}
+          >
+            {step === 0 ? "Cancel" : "Back"}
+          </Button>
+          <div className="flex items-center gap-2">
+            {last && (
+              <Button disabled={go.isPending} onClick={() => go.mutate("review")}>
+                Review Settings
+              </Button>
+            )}
+            <Button type="submit" variant="primary" disabled={!valid[step]} busy={go.isPending} className="min-w-24">
+              {last ? "Create" : "Continue"}
             </Button>
           </div>
-          <p className="text-xs text-slate">
-            Building usually takes a few minutes. Archie shows its progress as it reads.
-          </p>
         </div>
       </form>
     </div>

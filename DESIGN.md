@@ -1,346 +1,374 @@
 ---
 name: Archie
-description: A chatbot builder whose answers are captioned like gallery labels, with their provenance.
+description: A Mac app for your documents; answers whose sources open like Quick Look.
 colors:
-  wall: "#fbfbfa"
+  wall: "#f5f5f7"
   panel: "#ffffff"
-  plinth: "#f1f2f3"
-  rule: "#e3e5e8"
-  rule-strong: "#c9cdd3"
-  ink: "#23272e"
-  slate: "#56616d"
-  rail: "#5c1622"
-  rail-ink: "#ffffff"
-  rail-muted: "#e7cfd3"
-  rail-active: "#7d2633"
-  accent: "#7a1f2b"
-  accent-hover: "#64161f"
+  plinth: "#f0f0f2"
+  rule: "rgb(60 60 67 / 0.12)"
+  rule-strong: "rgb(60 60 67 / 0.22)"
+  ink: "#1d1d1f"
+  slate: "#6e6e73"
+  faint: "#8a8a8e"
+  rail: "rgb(242 242 245 / 0.82)"
+  rail-ink: "#1d1d1f"
+  rail-muted: "#6e6e73"
+  rail-active: "rgb(0 0 0 / 0.07)"
+  rail-ok: "#248a3d"
+  rail-bad: "#d70015"
+  accent: "#9e2a4a"
+  accent-hover: "#87213e"
   accent-ink: "#ffffff"
-  accent-soft: "#f7e9eb"
-  ok: "#1f6b46"
-  ok-soft: "#e8f3ec"
-  warn: "#8a4f00"
-  warn-soft: "#fdf3e1"
-  bad: "#b42318"
-  bad-soft: "#fdecea"
+  accent-soft: "#f6e8ed"
+  bubble: "#9e2a4a"
+  bubble-ink: "#ffffff"
+  ok: "#248a3d"
+  ok-soft: "#e6f4ea"
+  warn: "#b25000"
+  warn-soft: "#fdf0e3"
+  bad: "#d70015"
+  bad-soft: "#fde8ea"
 typography:
   display:
-    fontFamily: "Hanken Grotesk Variable, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "3rem"
-    fontWeight: 600
-    lineHeight: 1.04
-    letterSpacing: "-0.025em"
+    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Display, Segoe UI Variable Display, Segoe UI, system-ui, sans-serif"
+    fontSize: "1.75rem"
+    fontWeight: 700
+    lineHeight: 1.15
+    letterSpacing: "-0.015em"
   headline:
-    fontFamily: "Hanken Grotesk Variable, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "2.125rem"
-    fontWeight: 600
-    lineHeight: 1.12
-    letterSpacing: "-0.025em"
-  title:
-    fontFamily: "Hanken Grotesk Variable, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1.5rem"
+    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Display, Segoe UI Variable Display, Segoe UI, system-ui, sans-serif"
+    fontSize: "1.375rem"
     fontWeight: 600
     lineHeight: 1.25
-  body-lg:
-    fontFamily: "Hanken Grotesk Variable, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1.125rem"
-    fontWeight: 400
-    lineHeight: 1.45
+    letterSpacing: "-0.025em"
+  title:
+    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI Variable Text, Segoe UI, system-ui, sans-serif"
+    fontSize: "1.0625rem"
+    fontWeight: 600
+    lineHeight: 1.35
   body:
-    fontFamily: "Hanken Grotesk Variable, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI Variable Text, Segoe UI, system-ui, sans-serif"
     fontSize: "0.9375rem"
     fontWeight: 400
     lineHeight: 1.5
-    fontFeature: "\"ss01\", \"cv11\", \"tnum\""
-  label:
-    fontFamily: "Hanken Grotesk Variable, ui-sans-serif, system-ui, sans-serif"
+    fontFeature: "\"tnum\""
+  body-sm:
+    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI Variable Text, Segoe UI, system-ui, sans-serif"
     fontSize: "0.8125rem"
-    fontWeight: 600
+    fontWeight: 400
+    lineHeight: 1.45
+  label:
+    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI Variable Text, Segoe UI, system-ui, sans-serif"
+    fontSize: "0.75rem"
+    fontWeight: 500
     lineHeight: 1.35
   mono:
-    fontFamily: "JetBrains Mono Variable, ui-monospace, monospace"
-    fontSize: "0.8125rem"
-    fontWeight: 600
+    fontFamily: "ui-monospace, SF Mono, SFMono-Regular, Cascadia Mono, Menlo, Consolas, monospace"
+    fontSize: "0.75rem"
+    fontWeight: 400
     lineHeight: 1.35
-    letterSpacing: "0.025em"
 rounded:
-  label: "3px"
-  badge: "6px"
-  control: "8px"
-  panel: "12px"
-  pill: "9999px"
+  segment: "5px"
+  control: "6px"
+  segmented: "7px"
+  group: "10px"
+  sheet: "14px"
+  bubble: "18px"
+  full: "9999px"
 spacing:
-  gutter-mobile: "20px"
-  gutter-desktop: "40px"
-  label-x: "14px"
-  label-y: "12px"
-  stack: "24px"
-  section: "32px"
+  hairline-gap: "2px"
+  xs: "4px"
+  sm: "8px"
+  md: "12px"
+  row-x: "16px"
+  pane-x: "20px"
+  pane-x-wide: "32px"
 components:
   button-primary:
     backgroundColor: "{colors.accent}"
     textColor: "{colors.accent-ink}"
-    typography: "{typography.body}"
+    typography: "{typography.body-sm}"
     rounded: "{rounded.control}"
-    padding: "0 16px"
-    height: "40px"
+    padding: "0 14px"
+    height: "32px"
   button-primary-hover:
     backgroundColor: "{colors.accent-hover}"
   button-secondary:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.ink}"
+    typography: "{typography.body-sm}"
     rounded: "{rounded.control}"
-    padding: "0 16px"
-    height: "40px"
+    padding: "0 14px"
+    height: "32px"
+  button-secondary-hover:
+    backgroundColor: "{colors.plinth}"
   button-ghost:
     backgroundColor: "transparent"
-    textColor: "{colors.slate}"
+    textColor: "{colors.accent}"
     rounded: "{rounded.control}"
-    padding: "0 16px"
-    height: "40px"
+    padding: "0 10px"
+    height: "28px"
   button-ghost-hover:
-    backgroundColor: "{colors.plinth}"
-    textColor: "{colors.ink}"
+    backgroundColor: "{colors.accent-soft}"
   button-danger:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.bad}"
     rounded: "{rounded.control}"
-    padding: "0 16px"
-    height: "40px"
+    padding: "0 14px"
+    height: "32px"
   button-danger-hover:
     backgroundColor: "{colors.bad-soft}"
-  button-sm:
-    typography: "{typography.label}"
-    padding: "0 12px"
-    height: "32px"
-  button-lg:
-    typography: "{typography.body-lg}"
-    padding: "0 20px"
-    height: "48px"
-  gallery-label:
-    backgroundColor: "{colors.panel}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.label}"
-    padding: "12px 14px"
-  citation-mark:
-    backgroundColor: "{colors.accent-soft}"
-    textColor: "{colors.accent}"
-    typography: "{typography.mono}"
-    rounded: "{rounded.label}"
-    padding: "0 6px"
-  badge-neutral:
-    backgroundColor: "{colors.plinth}"
-    textColor: "{colors.slate}"
-    typography: "{typography.label}"
-    rounded: "{rounded.badge}"
-    padding: "0 8px"
-    height: "24px"
-  badge-ok:
-    backgroundColor: "{colors.ok-soft}"
-    textColor: "{colors.ok}"
-  badge-warn:
-    backgroundColor: "{colors.warn-soft}"
-    textColor: "{colors.warn}"
-  badge-bad:
-    backgroundColor: "{colors.bad-soft}"
-    textColor: "{colors.bad}"
-  badge-accent:
-    backgroundColor: "{colors.accent-soft}"
-    textColor: "{colors.accent}"
   input:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.ink}"
     typography: "{typography.body}"
     rounded: "{rounded.control}"
-    padding: "0 12px"
-    height: "40px"
-  nav-item:
-    backgroundColor: "transparent"
-    textColor: "{colors.rail-muted}"
-    typography: "{typography.body}"
-    rounded: "{rounded.control}"
-    padding: "0 12px"
-    height: "40px"
-  nav-item-active:
-    backgroundColor: "{colors.rail-ink}"
-    textColor: "{colors.rail}"
-  rail:
-    backgroundColor: "{colors.rail}"
-    textColor: "{colors.rail-ink}"
-    width: "256px"
-  dialog:
+    padding: "0 10px"
+    height: "32px"
+  badge-neutral:
+    backgroundColor: "{colors.plinth}"
+    textColor: "{colors.slate}"
+    typography: "{typography.label}"
+    rounded: "{rounded.full}"
+    padding: "0 10px"
+    height: "22px"
+  badge-accent:
+    backgroundColor: "{colors.accent-soft}"
+    textColor: "{colors.accent}"
+    typography: "{typography.label}"
+    rounded: "{rounded.full}"
+    padding: "0 10px"
+    height: "22px"
+  badge-ok:
+    backgroundColor: "{colors.ok-soft}"
+    textColor: "{colors.ok}"
+    rounded: "{rounded.full}"
+  badge-warn:
+    backgroundColor: "{colors.warn-soft}"
+    textColor: "{colors.warn}"
+    rounded: "{rounded.full}"
+  badge-bad:
+    backgroundColor: "{colors.bad-soft}"
+    textColor: "{colors.bad}"
+    rounded: "{rounded.full}"
+  citation-chip:
+    backgroundColor: "{colors.accent-soft}"
+    textColor: "{colors.accent}"
+    typography: "{typography.label}"
+    rounded: "{rounded.full}"
+    padding: "0 8px"
+    height: "20px"
+  citation-chip-hover:
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.accent-ink}"
+  segmented-control:
+    backgroundColor: "{colors.plinth}"
+    rounded: "{rounded.segmented}"
+    padding: "2px"
+  segmented-option-selected:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.panel}"
+    typography: "{typography.body-sm}"
+    rounded: "{rounded.segment}"
+    padding: "0 12px"
+    height: "24px"
+  group:
+    backgroundColor: "{colors.panel}"
+    rounded: "{rounded.group}"
+  group-row:
+    typography: "{typography.body}"
+    padding: "10px 16px"
+    height: "44px"
+  sidebar-row:
+    textColor: "{colors.rail-ink}"
+    typography: "{typography.body-sm}"
+    rounded: "{rounded.control}"
+    padding: "0 8px"
+    height: "32px"
+  sidebar-row-active:
+    backgroundColor: "{colors.rail-active}"
+  user-bubble:
+    backgroundColor: "{colors.bubble}"
+    textColor: "{colors.bubble-ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.bubble}"
+    padding: "10px 16px"
+  sheet:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.sheet}"
     width: "512px"
+  quick-look:
+    backgroundColor: "{colors.panel}"
+    rounded: "{rounded.sheet}"
+    width: "576px"
 ---
 
 # Design System: Archie
 
 ## Overview
 
-**Creative North Star: "The Well-Kept Gallery"**
+**Creative North Star: "The Document Mac App"**
 
-Archie runs like a well-kept gallery: quiet walls, a painted rail, and every answer captioned like an object label with its provenance. The wall is near-white and almost silent; the one painted surface is the deep oxblood navigation rail, which also lends its colour to primary actions, selection, focus and citation marks. Everything else is ink and slate on white, separated by hairline rules rather than shadows.
+Archie behaves like a native Mac application in the family of Notes, Mail and System Settings: a translucent source-list sidebar of chatbots, one calm content pane topped by a large title, inset grouped sections on a soft grey ground, and hairline separators instead of borders. Nothing is branded by decoration; the brand lives in one colour, Archie wine, used exactly where macOS uses system blue: actions, selection, links and the person's own words.
 
-The signature is the tombstone label: a small square-cornered hairline card with an accession mark in mono oxblood, a semibold title, and provenance lines in slate. It captions answer sources hung in the margin beside the answer, the chatbots hung on the home wall, and the welcome steps. Density is moderate: dense where experts read tables and traces, generous where a first-timer is choosing what to do next. The system refuses the grey-sidebar-plus-stat-tiles admin template and the dark neon AI console.
+The signature is Quick Look for sources. Every answer carries capsule citation chips and a row of source cards; any of them opens a panel that grows from the element that was pressed, showing the passage, file, page and match, and closes on Space or Escape. The second recurring idea is that a change stays lit until noticed: a chatbot whose build finished keeps a wine dot in the sidebar until it is opened, and build progress updates in place.
 
-There is one type family, Hanken Grotesk, on a strict six-step ladder; rank comes from size and weight, never from colour or decoration. JetBrains Mono is reserved for ids, scores, timings and accession marks.
+Density is Mac-comfortable, not dashboard-dense: 13 px controls, 15 px body, 44 px grouped rows, a 736 px reading column in Ask. Depth comes from tonal layering (white on #f5f5f7) and half-pixel rings, with real shadows reserved for things that float. The system refuses the web-admin template (top bar, stat tiles, a dense table as the page) and the dark neon AI console.
 
 **Key Characteristics:**
-- Gallery-white wall, one painted oxblood rail, oxblood as the only accent.
-- The tombstone label (3px corners, hairline border, mono accession mark) as the reusable signature.
-- Flat surfaces divided by hairlines; shadow only on the modal layer.
-- One sans family on a 13/15/18/24/34/48 ladder; mono only for machine values.
-- State colours appear only where they carry meaning; every pairing meets WCAG AA.
-- Full light and dark themes from the same token names.
+- Platform type only: SF Pro on Apple devices, Segoe UI Variable on Windows, system-ui elsewhere, on a 12/13/15/17/22/28 ladder with semibold for rank.
+- One accent (Archie wine) for actions, selection, links and user bubbles; status hues only where they mean state.
+- Inset grouped sections (10 px) with inset hairlines; 6 px push buttons; capsule badges and chips; segmented controls for view switching.
+- Translucent sidebar and toolbar over content, with backdrop blur.
+- Sheets for modal tasks, side panels for inspection, Quick Look for sources.
+- Light and dark are both first-class; dark is a re-mapped token set, not an inversion.
 
 ## Colors
 
-A near-white wall, ink text, and a single deep oxblood carried from the rail into every point of action.
+A neutral Apple-grey palette carrying a single warm wine accent and Apple's accessible status hues.
 
 ### Primary
-- **Gallery Oxblood** (accent): primary buttons, selected switches, focus rings, text caret, link hover, citation marks and accession marks. The only accent hue in the system.
-- **Oxblood Deep** (accent-hover): the pressed-in hover state of primary buttons.
-- **Oxblood Blush** (accent-soft): citation-mark ground, accent badges, text selection.
-- **Accent Ink** (accent-ink): text on oxblood fills.
-
-### Secondary
-- **Painted Rail** (rail): the navigation rail's paint. Never used as a content fill on the wall.
-- **Rail Wash** (rail-active): hover fill for rail items (at 60%) and rail utility buttons.
-- **Rail Rose** (rail-muted): inactive rail text, the chatbot sub-navigation caption, service status.
-- **Rail White** (rail-ink): rail type and the active nav pill, which inverts to white with rail-coloured text.
+- **Archie Wine** (accent): primary buttons, the Ask send button, ghost-button text, links, citation chip text, the switch's on state, the focus ring (45% mix) and text selection (22% mix), the streaming caret, the unseen-build dot, and the app mark. In dark mode it lifts to a pink (#ff7a9c) with near-black ink on it.
+- **Wine Pressed** (accent-hover): hover state of filled accent buttons only.
+- **Wine Wash** (accent-soft): citation chips at rest, accent badges, the chatbot initial tile, step icons in the setup assistant, "Edited" markers, the selected Builds history row.
+- **Conversation Wine** (bubble / bubble-ink): the person's own messages, white on wine. In dark it is a deeper wine (#a3304f) so white text keeps contrast.
 
 ### Neutral
-- **Gallery Wall** (wall): the page background behind everything.
-- **Panel White** (panel): labels, controls, dialogs, outcome panels and the mobile header.
-- **Plinth** (plinth): the user's own message bubble, ghost-button hover, neutral badges, skeletons and progress tracks.
-- **Hairline** (rule): label and panel borders, dividers, stat top rules.
-- **Strong Hairline** (rule-strong): control borders, secondary-button borders, the off switch track, scrollbars.
-- **Ink** (ink): body and heading text.
-- **Slate** (slate): descriptions, provenance lines, captions, placeholders, ghost-button text.
+- **Grouped Ground** (wall): the soft grey behind grouped content: Manage, Settings, the setup assistant, and icon wells in source cards and Quick Look.
+- **Content White** (panel): the content pane, grouped sections, sheets, inputs, secondary buttons.
+- **Fill Grey** (plinth): hover fills, segmented-control track, neutral badges, skeleton bars, sheet close buttons.
+- **Hairline** (rule): separators between rows, toolbar and sidebar edges, the ring around grouped sections.
+- **Control Edge** (rule-strong): the half-pixel ring on buttons, inputs, source cards and the ask field; the switch's off track; scrollbar thumb.
+- **Label** (ink), **Secondary Label** (slate), **Tertiary Label** (faint): text in three ranks. Tertiary is only for placeholders, decorative icons and non-essential text at 15 px or larger.
+- **Source List** (rail, rail-ink, rail-muted, rail-active): the translucent sidebar, its text, section headers and icons, and the row highlight.
 
-### State
-- **Forest** (ok / ok-soft), **Amber** (warn / warn-soft), **Signal Red** (bad / bad-soft): status badges, error notes, failed-build panels and the danger button. Always as a soft ground with the strong hue as text.
-
-### Dark theme
-The `.dark` class remaps every token under the same name: wall #15171a, panel #1c1f23, plinth #24282d, rule #30353c, rule-strong #454c55, ink #eceef1, slate #a7b0ba; rail #3a0d15, rail-active #5c1622, rail-muted #d9b9be; accent #e8798a with dark accent-ink #15171a (oxblood is raised to a light rose so it passes AA as text and as a fill), accent-hover #f08f9e, accent-soft #3a1a20; ok #7fd1a4, warn #f3c068, bad #ff9b8f over deep soft grounds.
+### Status
+- **Green** (ok / ok-soft), **Orange** (warn / warn-soft), **Red** (bad / bad-soft): status badges, status dots, error notes, the danger button's text, invalid-field rings. rail-ok and rail-bad repeat green and red for the sidebar's service dot.
 
 ### Named Rules
-**The One Paint Rule.** Oxblood is the only accent. It marks action, selection, focus and provenance; it is never decoration, and no second accent hue is introduced.
+**The System Blue Rule.** Archie wine appears only on actions, selection, links, citations and the person's own messages. It never colours a heading, a panel, a border or a decorative surface.
 
-**The Meaningful State Rule.** Forest, amber and red appear only when they report a real state (ready, needs rebuild, failed). A neutral thing is never coloured to look lively.
+**The State Only Rule.** Green, orange and red mean state and nothing else. A screen with nothing wrong shows no red and no orange.
 
-**The Mode Pair Rule.** Every colour is a token with a light and a dark value under one name; components never hard-code a hex.
+**The Three Labels Rule.** Text uses ink, slate or faint; never a fourth grey, and never faint for anything a person must read below 15 px.
 
 ## Typography
 
-**Display Font:** Hanken Grotesk Variable (with ui-sans-serif, system-ui)
-**Body Font:** Hanken Grotesk Variable
-**Label/Mono Font:** JetBrains Mono Variable (with ui-monospace), for ids, scores, timings and accession marks only
+**Display Font:** SF Pro Display (with Segoe UI Variable Display, Segoe UI, system-ui)
+**Body Font:** SF Pro Text (with Segoe UI Variable Text, Segoe UI, system-ui)
+**Label/Mono Font:** SF Mono (with Cascadia Mono, Menlo, Consolas) for ids, timings and model names
 
-**Character:** A clear, slightly humanist grotesk doing all the work, like wayfinding type in a museum; the mono is the registrar's hand on the accession card. Stylistic sets ss01 and cv11 and tabular figures are on globally.
+**Character:** The operating system's own voice. Hierarchy comes from size steps and weight (semibold for rank, bold only on the large title), not from a branded face. Numerals are tabular everywhere.
 
 ### Hierarchy
-- **Display** (600, 48px, 1.04, tight tracking): the Welcome wall headline only.
-- **Headline** (600, 34px, 1.12, tight tracking): page titles in the page header, the "Ready to answer" outcome, the empty-chat prompt.
-- **Title** (600, 24px, 1.25): section headings, chatbot names on the home wall, empty-state titles, stat values.
-- **Body large** (400, 18px, 1.45): answer text, the user's messages, the Welcome lede.
-- **Body** (400, 15px, 1.5): the default UI size: controls, descriptions, tables, nav items. Descriptions cap at roughly 42rem.
-- **Label** (600, 13px, 1.35, sentence case): badges, stat labels, list captions such as "Sources" and "Try asking", provenance lines (at 400).
-- **Mono** (600, 13px, slight positive tracking): accession marks (S1), citation marks, scores and timings.
+- **Display** (700, 28 px, 1.15, -0.015em): the large title at the top of every content pane ("Ask Team handbook") and each step of the setup assistant.
+- **Headline** (600, 22 px, 1.25, tight tracking): section titles inside a pane: the Settings stage title, the inline build-progress title, the not-yet-built notice.
+- **Title** (600, 17 px, 1.35): sheet titles, empty-state titles, the Ask field's typed text (17 px regular).
+- **Body** (400, 15 px, 1.5): answers, passage text, grouped-row labels, descriptions under the large title. Reading column capped at 736 px.
+- **Body small** (400 or 500, 13 px, 1.45): controls, buttons, sidebar rows, row details, group headers (semibold, slate), the one-line "how answered" account.
+- **Label** (500, 12 px, 1.35): badges, citation chips, Manage tab labels, sidebar section header ("Chatbots", semibold), group footers, captions. Sentence case, never uppercase.
 
 ### Named Rules
-**The Ladder Rule.** Only the six sizes 13/15/18/24/34/48 exist. Nothing is set between rungs.
+**The Platform Voice Rule.** No webfont. Every surface uses the system stack so Archie reads as part of the computer it runs on.
 
-**The Weight-Not-Paint Rule.** Rank comes from size and weight (400 or 600; 700 only in the wordmark). Headings are ink, never accent-coloured, and never uppercase.
-
-**The Machine Voice Rule.** Mono is for values a machine produced: ids, scores, timings, source marks. Prose is never set in mono.
+**The Sentence Case Rule.** Headers, group titles and labels are sentence case at normal tracking. No uppercase, no letter-spaced small caps.
 
 ## Layout
 
-A fixed 256px rail on the left from 768px up; below that the rail becomes an off-canvas drawer over a 40% black scrim, and a 56px panel-white header carries a menu button and the Wordmark. The wall to the right scrolls independently.
+A two-column application window. At 768 px and up, a fixed 260 px sidebar sits beside the content pane; below 768 px the sidebar becomes an off-canvas drawer opened from a toolbar menu button, with a 25% black scrim.
 
-Pages open with a page header (title and description left, actions right, wrapping below) on a 20px gutter on mobile and 40px from 768px, with 32px / 40px top padding. The primary action always sits top right of the wall. Content uses the same gutters; reading surfaces centre at max 72rem (chat), descriptions and prose cap at 42-48rem.
+The content pane has a sticky 52 px toolbar (translucent white at 85% with blur, hairline below) in a three-column grid: title leading, the Ask | Manage segmented control centred, trailing area. Content scrolls beneath it. Pane gutters are 20 px, widening to 32 px at 768 px; the large title sits 28 px below the toolbar with 20 px under it.
 
-Two-column patterns recur from 1024px: the home wall hangs chatbot labels in a 2-column grid with 24px gaps; chat and build pages pair a fluid main column with a 17rem margin column (sources beside the answer, 40px gap); setup pairs a 15rem section index with the form. Stats sit in 2-up grids rising to 3 or 4 across. Vertical rhythm: 24px between sibling cards, 40px between chat turns, 32px for section padding.
+Ask is a single centred column (max 736 px) with the conversation above and the ask field pinned at the bottom in the same width. Messages are separated by 36 px. Manage sits on the grouped ground with centred icon-over-label tabs, then grouped sections in columns no wider than 672 to 896 px. Grouped rows are at least 44 px tall with 16 px horizontal and 10 px vertical padding. Common gaps are 8 and 12 px; sidebar rows stack 2 px apart.
 
 ## Elevation & Depth
 
-Flat by default. Depth comes from tonal layering (wall, then panel white, then plinth) and hairline borders, not shadows. The only shadows in the system are the modal dialog's long soft drop and the switch thumb's 1px contact shadow; the modal sits over a 45% ink backdrop.
+Depth is tonal first: white content sits on the #f5f5f7 ground, and edges are drawn with half-pixel rings (`0 0 0 0.5px` of rule or rule-strong) rather than borders. Real shadows appear only on things that sit above the window or are meant to be pressed: buttons get a 1 px lip, the selected segment a small lift, the ask field a soft 16 px float, and sheets and Quick Look a deep, wide drop.
 
 ### Shadow Vocabulary
-- **Modal drop** (`box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.45)`): center and side dialogs only.
-- **Thumb contact** (`box-shadow: 0 1px 2px rgb(0 0 0 / 0.25)`): the switch knob.
+- **Group ring** (`box-shadow: 0 0 0 0.5px var(--color-rule)`): grouped sections, the selected Manage tab, welcome cards.
+- **Control ring** (`box-shadow: 0 0 0 0.5px var(--color-rule-strong), 0 1px 1px rgb(0 0 0 / 0.06)`): secondary and danger buttons; source cards use the ring alone.
+- **Primary lip** (`box-shadow: 0 1px 1px rgb(0 0 0 / 0.12)`): filled accent buttons.
+- **Selected segment** (`box-shadow: 0 1px 2px rgb(0 0 0 / 0.12), 0 0 0 0.5px rgb(0 0 0 / 0.06)`): the chosen option in a segmented control.
+- **Ask field float** (`box-shadow: 0 0 0 0.5px var(--color-rule-strong), 0 4px 16px rgb(0 0 0 / 0.06)`): the pinned ask field.
+- **Sheet** (`box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 22px 70px rgb(0 0 0 / 0.28)`): dialogs and side panels, over a 28% black backdrop.
+- **Quick Look** (`box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 30px 80px rgb(0 0 0 / 0.3)`): the source preview.
 
 ### Named Rules
-**The Hairline Rule.** Surfaces separate with a 1px rule or a tonal step. Cards, labels and panels never carry shadows at rest; highlighting a source uses a 2px oxblood ring, not a lift.
+**The Half-Pixel Rule.** Edges are 0.5 px rings in rule or rule-strong. Solid 1 px borders are used only for the sidebar, toolbar and internal separators.
+
+**The Float Means Above Rule.** A diffuse shadow is earned only by something above the window plane: a sheet, Quick Look, or the pinned ask field.
 
 ## Shapes
 
-Two corner languages, kept apart on purpose. Labels are nearly square (3px): the tombstone label, home-wall chatbot labels, citation marks and the highlight ring around a source. Controls are gently rounded (8px): buttons, inputs, selects, text areas, nav items, suggestion buttons, error notes. Badges sit between (6px). Large panels and the centre dialog use 12px, as does the user's message bubble; the side dialog is square to the viewport edge. Pills (full round) are reserved for switches, status dots and progress bars.
-
-The Wordmark is a 2px-stroked rounded square enclosing a geometric A.
+Gently rounded, nested by size: segments (5 px) inside a segmented track (7 px), push buttons, inputs and sidebar rows (6 px), grouped sections, source cards and error notes (10 px; large buttons too), sheets, Quick Look and the ask field (14 px). Badges, citation chips, switches, status dots and the round send button are full capsules or circles. User bubbles are 18 px with the trailing bottom corner tightened to 6 px, as in Messages. The app mark and chatbot initial tiles are 6 px rounded squares.
 
 ## Components
 
 ### Buttons
-Quiet, confident and heavy-weighted; one primary per region.
-- **Shape:** gently rounded (8px), 1px border on every variant so sizes align.
-- **Primary:** oxblood fill, white semibold text; 40px tall with 16px sides (sm 32px / 12px at 13px; lg 48px / 20px at 18px).
-- **Hover / Focus:** colour-only transitions at 150ms; primary deepens to Oxblood Deep, secondary's border darkens to ink. Focus is a 2px oxblood outline at 2px offset everywhere.
-- **Secondary:** panel white with a strong hairline border, ink text.
-- **Ghost:** transparent, slate text, plinth fill on hover; used for icon-only settings, delete and close actions.
-- **Danger:** panel white, red text, red border and soft red fill on hover.
-- **Busy / Disabled:** a spinning loader sits before the label and the button disables; disabled drops to 45% opacity with a not-allowed cursor.
-- Links that act as buttons take the same classes; a button is never nested in a link.
+Quiet Mac push buttons that confirm the press.
+- **Shape:** gently rounded (6 px); small 28 px, regular 32 px, large 44 px with a 10 px radius.
+- **Primary:** wine fill, white text, 13 px medium, 14 px side padding, a 1 px lip; hover deepens to Wine Pressed.
+- **Secondary:** white with a control ring; hover fills grey. **Ghost:** wine text, no fill, wine wash on hover. **Danger:** white with red text, red wash on hover.
+- **Press:** every pressable scales to 0.97 over 160 ms on cubic-bezier(0.23, 1, 0.32, 1). Disabled drops to 40% opacity. The cursor stays the arrow, as on the desktop.
 
-### Chips (status badges)
-- **Style:** 24px tall, 6px corners, 13px semibold, soft tonal ground with the strong tone as text (neutral, accent, ok, warn, bad).
-- **State:** words are plain language for non-technical readers ("Needs rebuild", "Declined to answer", "Answered from memory"), never raw state names.
+### Badges and Chips
+- **Badges:** 22 px capsules, 12 px medium, tinted fill with matching text: neutral, accent, ok, warn, bad. Status words are plain language ("Needs rebuild", "Finished with problems"), never internal state names.
+- **Status dots:** 8 px circles with an accessible name, as macOS shows availability.
+- **Citation chips:** 20 px capsules, wine on wine wash inline in the answer; hover inverts to white on wine; an unknown citation shows red.
 
-### Cards / Containers
-- **Corner Style:** 3px for labels, 12px for outcome and stage panels.
-- **Background:** panel white on the wall; failed panels use the soft red ground with no border.
-- **Shadow Strategy:** none (see The Hairline Rule).
-- **Border:** 1px Hairline.
-- **Internal Padding:** labels 12px / 14px; home-wall chatbot labels 20px top, 24px sides; panels 24px rising to 32px.
+### Grouped Sections
+- **Corner Style:** 10 px, clipping their rows.
+- **Background:** white, with the group ring, on the grouped ground.
+- **Structure:** optional 13 px semibold slate header above, rows divided by hairlines, optional 12 px slate footer below. Rows lead with a 15 px label (13 px detail under it) and trail with the control or value.
 
 ### Inputs / Fields
-- **Style:** panel white, 1px strong hairline, 8px corners, 40px tall (text areas grow with 10px vertical padding and relaxed leading), 15px ink text, slate placeholders, oxblood caret. Controls fill their container unless given a width.
-- **Focus:** the border turns oxblood; hover darkens it to slate.
-- **Error / Disabled:** `aria-invalid` turns the border red; disabled fades to 60%.
-- **Switch:** 44 x 24 pill, oxblood when on, strong hairline when off, white thumb sliding at 150ms.
+- **Style:** white, 6 px, half-pixel control ring plus a faint inner top shadow; 32 px tall, 15 px text, wine caret, faint placeholder.
+- **Focus:** a 3 px wine ring at 35% replaces the outline.
+- **Error / Disabled:** invalid fields carry a 1.5 px red ring; disabled at 50% opacity.
+- **Switch:** 38 x 22 px capsule, wine when on, Control Edge when off, white 18 px knob sliding 200 ms.
+- **Ask field:** a 14 px floating field pinned under the conversation, 17 px text, round 32 px send button in wine (stop button in ink while streaming); focus shows a 3 px wine ring at 30%.
 
 ### Navigation
-- **Rail:** oxblood-painted, 256px, Wordmark at the top, main nav (Chatbots, Health), then when inside a chatbot a captioned sub-navigation (Ask, Setup, Builds, Evaluate, Activity), with service status, theme and access-key utilities pinned to the bottom above a 15% white hairline.
-- **Items:** 40px tall, 8px corners, 18px icons, 15px rail-rose text; hover fills with Rail Wash at 60% and turns white; the active item inverts to a white pill with rail-coloured semibold text.
-- **Mobile:** the rail slides in over 200ms; it is inert and hidden from assistive tech when closed and closes after every navigation.
+- **Sidebar:** translucent source list (rail at 82% with 2xl backdrop blur and 150% saturation). Wordmark at the top in a 52 px band; a "Chatbots" header; 32 px rows with a 24 px initial tile, name and a trailing state (spinner while building, wine dot for an unseen finished build, status dot when not ready). The foot holds New Chatbot in wine, Status with a live service dot, and Preferences. Active rows take the rail-active fill and medium weight.
+- **Toolbar:** 52 px, translucent, with the Ask | Manage segmented control centred.
+- **Segmented control:** grey 7 px track with 2 px inset; options 24 px, 13 px medium; the selected one is white with a small lift, the rest slate turning ink on hover. Also used for the theme choice and filters.
+- **Manage tabs:** centred icon-over-label buttons (20 px icon, 12 px label, min 80 px); the active tab is white with wine text and the group ring.
+- **Mobile:** below 768 px the sidebar slides in from the leading edge over 300 ms on the sheet curve.
 
-### Tombstone Label (signature)
-The museum object label. A 3px-cornered hairline card on panel white: an optional accession mark in mono oxblood semibold (S1, or "S1 · 82% match"), the title in semibold ink, and provenance lines in 13px slate joined by middle dots. In chat, sources hang in the 17rem margin beside their answer; inline citation marks are small 3px oxblood-blush tabs in mono that invert to oxblood on hover and point at the matching label, which takes a 2px oxblood ring when highlighted. On the home wall each chatbot hangs as a larger label (headline-size name, status badge, a one-line count summary, one status-driven action).
+### Sheets and Side Panels
+Native modal dialogs. Centre sheets are up to 512 px wide, 14 px corners, title 17 px semibold with a round grey close button, actions bottom-trailing; they appear over 240 ms on cubic-bezier(0.32, 0.72, 0, 1), rising 8 px from 98% scale. Side panels (trace, inspection) fill the height with an 8 px inset and slide 24 px in from the trailing edge. Preferences is a sheet of grouped sections.
 
-### Dialog
-Native modal dialog: centred at max 512px with 12px corners, or a side sheet the full viewport height at max 672px with square corners. Header and footer are separated by hairlines; footer actions align right, primary last.
+### Quick Look (signature)
+A 576 px panel that grows from the chip or source card that opened it (transform-origin set from that element, scale from 0.5 over 220 ms). Header: 36 px icon well on the grouped ground, file name (15 px semibold), section and pages in slate, and an accent badge with the source label and match percentage. Body: the passage at 15 px relaxed, with markdown tables rendered as hairline-ringed 10 px tables. Footer: "Press Space or Esc to close" and a wine Done link.
 
-### Motion
-New assistant answers settle in (opacity and 4px rise, 220ms, ease-out-expo `cubic-bezier(0.16, 1, 0.3, 1)`); a blinking oxblood block caret marks streaming text. All motion is disabled under reduced-motion preferences.
+### Source Cards
+White 10 px cards with the control ring: a 32 px icon well, the wine source label beside the file name (13 px medium), and the section and pages in a 12 px slate line. Two per row from 640 px. Hover fills grey; press opens Quick Look.
+
+### Conversation
+User messages are right-aligned wine bubbles (max 85%). Answers are unboxed body text with inline citation chips, then a "Sources" row of source cards, then a one-line slate account of how it was answered with verdict badges and a wine "How Archie found this" link. Streaming shows a pulsing wine dot with the current stage, then a 2 px wine caret. New content settles in (6 px rise, 260 ms).
+
+### Feedback
+Empty states are centred: a 40 px faint line icon, a 17 px semibold title, slate body. Skeletons are pulsing grey capsules of decreasing width. Error notes are red text on red wash in a 10 px block.
 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** caption every answer source with a tombstone label in the margin beside the answer: mono oxblood mark, semibold title, slate provenance.
-- **Do** keep oxblood for action, selection, focus and provenance, and put the single primary action top right of the wall.
-- **Do** separate surfaces with 1px hairlines and tonal steps (wall, panel, plinth).
-- **Do** set type only on the 13/15/18/24/34/48 ladder, ranking with size and weight.
-- **Do** use soft-ground status badges with plain-language words for every state a user sees.
-- **Do** define every new colour as a light/dark token pair and check it against WCAG AA in both themes.
+- **Do** use the system font stacks and the 12/13/15/17/22/28 ladder; rank with semibold, and reserve bold for the 28 px large title.
+- **Do** keep Archie wine to actions, selection, links, citations and user bubbles, the way macOS uses system blue.
+- **Do** put settings and lists in inset grouped sections (10 px, hairline-divided rows of at least 44 px) on the grouped ground.
+- **Do** draw edges with 0.5 px rings in rule or rule-strong, and save diffuse shadows for sheets, Quick Look and the ask field.
+- **Do** give every pressable the 0.97 press scale, and keep fades but drop movement and scaling under reduced motion.
+- **Do** open sources with Quick Look from the element that was pressed, closable with Space or Escape.
+- **Do** keep a finished build lit in the sidebar until the chatbot is opened.
+- **Do** write status in plain language with a status hue, never an internal state name.
 
 ### Don't:
-- **Don't** add a second accent hue or tint neutral content to look lively.
-- **Don't** put shadows on cards, labels or panels; shadows belong to the modal layer only.
-- **Don't** round labels like controls or controls like labels: labels 3px, controls 8px.
-- **Don't** set prose in mono, or set headings in accent colour or uppercase.
-- **Don't** add small uppercase kickers or eyebrows above headings; step numbers go in the heading itself ("1. Name it").
-- **Don't** build the grey-sidebar-plus-stat-tiles admin template or a dark neon AI console.
-- **Don't** mark a label with a coloured left rule; the label is a whole hairline card with its accession mark.
+- **Don't** build a web-admin layout: no top navigation bar, no stat tiles, no dense table as the page.
+- **Don't** drift toward a dark neon AI console; dark mode stays the re-mapped Apple greys.
+- **Don't** load a webfont or add a branded display face.
+- **Don't** use green, orange or red for anything other than state.
+- **Don't** use uppercase or letter-spaced labels, kicker lines above titles, or hard offset shadows.
+- **Don't** use faint grey for essential text below 15 px.
+- **Don't** add a fourth radius between 10 and 14 px or square off controls.

@@ -128,10 +128,8 @@ export function SchemaField({
                   onChange(field.options.filter((item) => next.has(item)));
                 }}
                 className={cn(
-                  "h-9 rounded-lg border px-3 text-sm transition-colors duration-150",
-                  on
-                    ? "border-accent bg-accent-soft font-semibold text-accent"
-                    : "border-rule-strong text-slate hover:border-slate",
+                  "press h-7 cursor-default rounded-full px-3 text-sm",
+                  on ? "bg-accent-soft font-medium text-accent" : "bg-plinth text-ink hover:bg-rule",
                 )}
               >
                 {option.startsWith(".") ? option.slice(1).toUpperCase() : humanize(option)}
@@ -208,24 +206,24 @@ export function SchemaField({
       : "";
 
   return (
-    <div className="grid gap-x-10 gap-y-2 py-5 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
+    <div className="grid gap-x-8 gap-y-2 py-3.5 md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] md:items-start">
       <div>
         <label
           htmlFor={id}
           id={field.kind === "multi" ? id : undefined}
-          className="flex items-center gap-2 font-semibold"
+          className="flex items-center gap-2 text-base font-medium"
         >
           {field.label}
-          {changed && <span className="rounded bg-accent-soft px-1.5 text-xs font-semibold text-accent">Edited</span>}
+          {changed && <span className="rounded-full bg-accent-soft px-2 text-xs font-medium text-accent">Edited</span>}
         </label>
-        <p id={hintId} className="mt-1 text-sm text-slate">
+        <p id={hintId} className="mt-0.5 text-sm text-slate">
           {field.help} {range}
         </p>
       </div>
       <div className="min-w-0 space-y-1.5 md:pt-0.5">
         {control}
         {error && (
-          <p role="alert" className="text-sm font-semibold text-bad">
+          <p role="alert" className="text-sm font-medium text-bad">
             {error}
           </p>
         )}

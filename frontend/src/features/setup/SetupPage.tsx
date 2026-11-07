@@ -2,7 +2,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Upload } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Button, cn, ErrorNote, GalleryLabel, PageHeader, Select, Skeleton, StatusBadge } from "../../components/ui";
+import {
+  Button,
+  cn,
+  Dialog,
+  ErrorNote,
+  PageHeader,
+  Select,
+  Skeleton,
+  SourceCard,
+  StatusBadge,
+} from "../../components/ui";
 import { api, type Config, type ValidationResult } from "../../lib/api";
 import {
   applyPreset,
@@ -40,7 +50,7 @@ function UploadPanel({ kbId }: { kbId: string }) {
           <div className="font-semibold">Uploaded files</div>
           <div className="text-sm text-slate">Rebuild after adding files so answers include them.</div>
         </div>
-        <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-rule-strong bg-panel px-4 text-sm font-semibold hover:border-ink">
+        <label className="press inline-flex h-8 cursor-default items-center gap-2 rounded-[var(--radius-control)] shadow-[0_0_0_0.5px_var(--color-rule-strong)] bg-panel px-4 text-sm font-semibold hover:border-ink">
           <Upload className="size-4" aria-hidden /> Add files
           <input
             type="file"
@@ -54,13 +64,51 @@ function UploadPanel({ kbId }: { kbId: string }) {
       <ErrorNote error={upload.error} />
       <ul className="mt-4 grid gap-2 sm:grid-cols-2">
         {uploads.data?.map((file) => (
-          <GalleryLabel as="li" key={file.name} title={file.name}>
+          <SourceCard as="li" key={file.name} title={file.name}>
             {(file.bytes / 1024).toFixed(1)} KB
-          </GalleryLabel>
+          </SourceCard>
         ))}
       </ul>
       {uploads.data?.length === 0 && <p className="mt-3 text-sm text-slate">No files yet.</p>}
     </div>
+  );
+}
+
+function DeleteChatbot({ kbId, name }: { kbId: string; name: string }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const remove = useMutation({
+    mutationFn: () => api.deleteKb(kbId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["kbs"] });
+      navigate("/", { replace: true });
+    },
+  });
+  return (
+    <>
+      <Button variant="danger" size="sm" onClick={() => setConfirming(true)} className="w-full lg:w-auto">
+        Delete Chatbot…
+      </Button>
+      <Dialog
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        title={`Delete ${name}?`}
+        footer={
+          <>
+            <Button onClick={() => setConfirming(false)}>Cancel</Button>
+            <Button variant="danger" busy={remove.isPending} onClick={() => remove.mutate()}>
+              Delete
+            </Button>
+          </>
+        }
+      >
+        <p className="text-base text-slate">
+          Its settings, history and search index are removed. Your documents are not touched. This can't be undone.
+        </p>
+        <ErrorNote error={remove.error} />
+      </Dialog>
+    </>
   );
 }
 
@@ -80,13 +128,13 @@ function StageRail({
   return (
     <nav
       aria-label="Settings by stage"
-      className="flex gap-6 overflow-x-auto pb-2 lg:flex-col lg:gap-7 lg:overflow-visible"
+      className="flex gap-5 overflow-x-auto pb-2 lg:flex-col lg:gap-5 lg:overflow-visible"
     >
       {groupStages(stages).map((group) => (
         <div key={group.title} className="shrink-0">
-          <div className="px-3 text-xs font-semibold text-ink">{group.title}</div>
-          <div className="px-3 pb-2 text-xs text-slate">{group.note}</div>
-          <div className="flex gap-1 lg:flex-col">
+          <div className="px-3 text-sm font-semibold text-slate">{group.title}</div>
+          <div className="px-3 pb-1.5 text-xs text-slate">{group.note}</div>
+          <div className="flex gap-0.5 rounded-[var(--radius-group)] bg-panel p-1 shadow-[0_0_0_0.5px_var(--color-rule)] lg:flex-col">
             {group.stages.map((stage) => {
               const edited = [...changed].some((path) => path.startsWith(`${stage.key}.`));
               const broken = problems.has(stage.key);
@@ -97,15 +145,19 @@ function StageRail({
                   onClick={() => onSelect(stage.key)}
                   aria-current={active === stage.key ? "page" : undefined}
                   className={cn(
-                    "flex h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-left text-sm whitespace-nowrap transition-colors duration-150",
-                    active === stage.key
-                      ? "bg-plinth font-semibold text-ink"
-                      : "text-slate hover:bg-plinth hover:text-ink",
+                    "flex h-8 shrink-0 cursor-default items-center gap-2 rounded-md px-2.5 text-left text-sm whitespace-nowrap",
+                    active === stage.key ? "bg-accent text-accent-ink" : "text-ink hover:bg-plinth",
                   )}
                 >
                   <span className="lg:flex-1">{stage.title}</span>
-                  {broken && <span className="text-xs font-semibold text-bad">Needs a fix</span>}
-                  {!broken && edited && <span className="text-xs font-semibold text-accent">Edited</span>}
+                  {broken && (
+                    <span className={cn("text-xs font-medium", active === stage.key ? "" : "text-bad")}>
+                      Needs a fix
+                    </span>
+                  )}
+                  {!broken && edited && (
+                    <span className={cn("text-xs font-medium", active === stage.key ? "" : "text-accent")}>Edited</span>
+                  )}
                 </button>
               );
             })}
@@ -198,7 +250,7 @@ export function SetupPage() {
     onSuccess: async (jobId) => {
       await queryClient.invalidateQueries({ queryKey: ["kb", kbId] });
       if (jobId) {
-        navigate(`/kb/${kbId}/builds/${jobId}`);
+        navigate(`/kb/${kbId}/manage/builds/${jobId}`);
         return;
       }
       setDraft((await api.getKb(kbId)).config);
@@ -250,7 +302,7 @@ export function SetupPage() {
       <PageHeader
         title={
           <span className="flex flex-wrap items-center gap-3">
-            Setup <StatusBadge status={kb.data?.status} />
+            Settings <StatusBadge status={kb.data?.status} />
           </span>
         }
         description={
@@ -275,64 +327,83 @@ export function SetupPage() {
         }
       />
       {differsFromBuilt && (
-        <div className="mx-5 mb-2 rounded-lg bg-warn-soft px-4 py-3 text-sm text-warn md:mx-10">
+        <div className="mx-5 mb-3 rounded-[var(--radius-group)] bg-warn-soft px-4 py-3 text-sm text-warn md:mx-8">
           These settings change how documents are read. Chat keeps using the current version until you rebuild.
         </div>
       )}
-      <div className="grid flex-1 gap-6 px-5 pb-10 md:px-10 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-12">
-        <StageRail
-          stages={stages}
-          active={stage.key}
-          onSelect={(key) => {
-            setActiveStage(key);
-            setShowAdvanced(false);
-          }}
-          changed={unsaved}
-          problems={problemStages}
-        />
+      <div className="grid flex-1 gap-6 px-5 pb-10 md:px-8 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-8">
+        <div className="space-y-5">
+          <StageRail
+            stages={stages}
+            active={stage.key}
+            onSelect={(key) => {
+              setActiveStage(key);
+              setShowAdvanced(false);
+            }}
+            changed={unsaved}
+            problems={problemStages}
+          />
+          <DeleteChatbot kbId={kbId} name={kb.data?.name ?? "this chatbot"} />
+        </div>
         <section aria-labelledby="stage-title" className="min-w-0">
-          <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-rule pb-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-3 px-1 pb-3">
             <div>
-              <h2 id="stage-title" className="text-lg font-semibold">
+              <h2 id="stage-title" className="font-display text-xl font-semibold tracking-tight">
                 {stage.title}
               </h2>
               <p className="mt-1 text-sm text-slate">{stage.summary}</p>
             </div>
-            <span className={cn("text-xs font-semibold", stage.rebuild ? "text-warn" : "text-ok")}>
+            <span className={cn("text-xs font-medium", stage.rebuild ? "text-warn" : "text-ok")}>
               {stage.rebuild ? "Changes need a rebuild" : "Changes apply to the next question"}
             </span>
           </div>
           {warnings
             .filter((warning) => warning.stage === stage.key)
             .map((warning) => (
-              <p key={warning.msg} className="mt-4 rounded-lg bg-warn-soft px-3 py-2 text-sm text-ink">
+              <p
+                key={warning.msg}
+                className="mb-3 rounded-[var(--radius-group)] bg-warn-soft px-4 py-2.5 text-sm text-ink"
+              >
                 {warning.msg}
               </p>
             ))}
-          <div className="divide-y divide-rule">{essentials.map(field)}</div>
+          {essentials.length > 0 && (
+            <div className="divide-y divide-rule rounded-[var(--radius-group)] bg-panel px-4 shadow-[0_0_0_0.5px_var(--color-rule)]">
+              {essentials.map(field)}
+            </div>
+          )}
           {essentials.length === 0 && (
-            <p className="py-6 text-sm text-slate">
+            <p className="rounded-[var(--radius-group)] bg-panel px-4 py-4 text-sm text-slate shadow-[0_0_0_0.5px_var(--color-rule)]">
               The defaults suit most collections. Open the advanced settings to tune.
             </p>
           )}
           {advanced.length > 0 && (
-            <div className="border-t border-rule">
+            <div className="mt-4">
               <button
                 type="button"
                 aria-expanded={showAdvanced}
                 onClick={() => setShowAdvanced((value) => !value)}
-                className="flex h-12 w-full items-center gap-2 text-sm font-semibold text-slate hover:text-ink"
+                className="flex h-9 cursor-default items-center gap-1.5 px-1 text-sm font-medium text-accent"
               >
-                <ChevronDown className={cn("size-4 transition-transform duration-150", showAdvanced && "rotate-180")} />
-                {showAdvanced ? "Hide advanced settings" : `Advanced settings (${advanced.length})`}
+                <ChevronDown
+                  className={cn(
+                    "size-4 transition-transform duration-200 ease-[var(--ease-out)]",
+                    !showAdvanced && "-rotate-90",
+                  )}
+                />
+                {showAdvanced ? "Hide Advanced" : `Advanced (${advanced.length})`}
               </button>
-              {showAdvanced && <div className="divide-y divide-rule border-t border-rule">{advanced.map(field)}</div>}
+              {showAdvanced && (
+                <div className="settle divide-y divide-rule rounded-[var(--radius-group)] bg-panel px-4 shadow-[0_0_0_0.5px_var(--color-rule)]">
+                  {advanced.map(field)}
+                </div>
+              )}
             </div>
           )}
           {stage.key === "source" && getField(draft, "source", "type") === "uploads" && <UploadPanel kbId={kbId} />}
         </section>
       </div>
-      <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t border-rule bg-panel px-5 py-3 md:px-10">
+      <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t border-rule bg-panel/85 px-5 py-2.5 backdrop-blur-xl md:px-8">
         <p className="text-sm text-slate" aria-live="polite">
           {action.kind === "blocked"
             ? `${action.reason}. Look for “Needs a fix” in the list.`
@@ -347,7 +418,7 @@ export function SetupPage() {
           <ErrorNote error={save.error ?? preset.error} />
           {unsaved.size > 0 && (
             <Button variant="ghost" onClick={() => setDraft(kb.data?.config ?? draft)}>
-              Discard changes
+              Discard Changes
             </Button>
           )}
           {action.kind !== "none" && (

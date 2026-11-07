@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Trace } from "../lib/api";
 import { Funnel, TraceView } from "./TracePanel";
-import { GalleryLabel, StatusBadge, Switch, statusText, width } from "./ui";
+import { SourceCard, StatusBadge, Switch, statusText, width } from "./ui";
 
 afterEach(cleanup);
 
@@ -107,11 +107,11 @@ describe("primitives", () => {
     expect(statusText(null)).toBe("");
   });
 
-  it("gallery label shows mark, title and provenance", () => {
+  it("source card shows mark, title and where in the file", () => {
     render(
-      <GalleryLabel mark="S1" title="guide.md">
+      <SourceCard mark="S1" title="guide.md">
         Greens and browns · p. 2
-      </GalleryLabel>,
+      </SourceCard>,
     );
     expect(screen.getByText("S1")).toBeTruthy();
     expect(screen.getByText("guide.md")).toBeTruthy();
