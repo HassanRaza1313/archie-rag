@@ -1,0 +1,30 @@
+{"question": "By how much did Northwind Labs revenue grow last year?", "expected_sources": ["annual-report.pdf"], "expected_text": ["18 percent", "42.6 million"]}
+{"question": "How many engineers started at the Lisbon office?", "expected_sources": ["annual-report.pdf"], "expected_text": ["Lisbon office opened in March with 35 engineers"]}
+{"question": "What was customer churn for the year?", "expected_sources": ["annual-report.pdf"], "expected_text": ["churn fell to 4.1 percent"]}
+{"question": "How big is the battery recycling research fund?", "expected_sources": ["annual-report.pdf"], "expected_text": ["2.5 million dollar research fund"]}
+{"question": "Where will the new calibration lab be built?", "expected_sources": ["annual-report.pdf"], "expected_text": ["calibration lab in Porto"]}
+{"question": "How much does the Team plan cost per month?", "expected_sources": ["pricing.pdf"], "expected_text": ["Team", "$49"]}
+{"question": "How many seats come with the Business plan?", "expected_sources": ["pricing.pdf"], "expected_text": ["Business", "$129", "50"]}
+{"question": "What do extra seats cost?", "expected_sources": ["pricing.pdf"], "expected_text": ["6 dollars each per month"]}
+{"question": "What recycling yield did the lithium recovery study achieve?", "expected_sources": ["research-paper.pdf"], "expected_text": ["92.4 percent"]}
+{"question": "At what temperature are the cells leached?", "expected_sources": ["research-paper.pdf"], "expected_text": ["60 degrees Celsius"]}
+{"question": "How pure was the recovered lithium carbonate?", "expected_sources": ["research-paper.pdf"], "expected_text": ["99.1 percent"]}
+{"question": "How long are backups kept?", "expected_sources": ["data-retention-rules.pdf"], "expected_text": ["35 days"]}
+{"question": "How long must audit logs be retained?", "expected_sources": ["data-retention-rules.pdf"], "expected_text": ["Audit logs shall be kept for 400 days"]}
+{"question": "How quickly are deletion requests completed?", "expected_sources": ["data-retention-rules.pdf"], "expected_text": ["within 30 days of receipt"]}
+{"question": "Which extension should I call to report a chemical spill?", "expected_sources": ["lab-safety-scan.pdf"], "expected_text": ["4417"]}
+{"question": "How often are fire extinguishers inspected?", "expected_sources": ["lab-safety-scan.pdf"], "expected_text": ["every six months"]}
+{"question": "How many days of paid leave do employees earn each month?", "expected_sources": ["employee-policy.docx"], "expected_text": ["2.25 days"]}
+{"question": "How many days a week can I work remotely?", "expected_sources": ["employee-policy.docx"], "expected_text": ["three days per week"]}
+{"question": "What is the hotel limit per night on business trips?", "expected_sources": ["employee-policy.docx"], "expected_text": ["Hotel per night", "180 EUR"]}
+{"question": "How many new enterprise customers were signed in Q3?", "expected_sources": ["q3-review.pptx"], "expected_text": ["14 new enterprise customers"]}
+{"question": "Why was the analytics module delayed?", "expected_sources": ["q3-review.pptx"], "expected_text": ["vendor API change"]}
+{"question": "When does the mobile app beta open?", "expected_sources": ["q3-review.pptx"], "expected_text": ["Mobile app beta opens in November"]}
+{"question": "How many thermal sensors are in stock in the Porto warehouse?", "expected_sources": ["inventory.xlsx"], "expected_text": ["Thermal sensor", "Porto", "40"]}
+{"question": "What is the stock of battery packs in Rotterdam?", "expected_sources": ["inventory.xlsx"], "expected_text": ["Battery pack", "Rotterdam", "197"]}
+{"question": "How do I export my data as a spreadsheet file?", "expected_sources": ["support-faq.html"], "expected_text": ["Settings, then Data, then Export"]}
+{"question": "How long is a password reset link valid?", "expected_sources": ["support-faq.html"], "expected_text": ["20 minutes"]}
+{"question": "How do I add a new sensor?", "expected_sources": ["support-faq.html"], "expected_text": ["Scan the QR code"]}
+{"question": "What is the CEO's favourite colour?", "expected_sources": []}
+{"question": "Who won the 1998 football world cup?", "expected_sources": []}
+{"question": "What is the office dress code?", "expected_sources": []}

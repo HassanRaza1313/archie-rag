@@ -14,16 +14,19 @@ FROM ghcr.io/astral-sh/uv:0.13.5 AS uv
 # ---- Python dependencies (cached separately from source) ----
 FROM ${PYTHON_IMAGE} AS python-build
 ARG INSTALL_OCR=false
+ARG INSTALL_LAYOUT=false
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_DOWNLOADS=never
 WORKDIR /src
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     extras="--extra rerank"; [ "$INSTALL_OCR" = "true" ] && extras="$extras --extra ocr"; \
+    [ "$INSTALL_LAYOUT" = "true" ] && extras="$extras --extra layout"; \
     uv sync --frozen --no-dev $extras --no-install-project
 COPY backend/src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     extras="--extra rerank"; [ "$INSTALL_OCR" = "true" ] && extras="$extras --extra ocr"; \
+    [ "$INSTALL_LAYOUT" = "true" ] && extras="$extras --extra layout"; \
     uv sync --frozen --no-dev $extras --no-editable
 
 # ---- UI build ----
@@ -37,7 +40,8 @@ RUN npm run build
 # ---- Python runtime base ----
 FROM ${PYTHON_IMAGE} AS python-runtime
 ARG INSTALL_OCR=false
-RUN if [ "$INSTALL_OCR" = "true" ]; then \
+ARG INSTALL_LAYOUT=false
+RUN if [ "$INSTALL_OCR" = "true" ] || [ "$INSTALL_LAYOUT" = "true" ]; then \
       apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*; \
     fi \
     && useradd --create-home --uid 10001 ragkit \
@@ -49,6 +53,7 @@ ENV PATH=/opt/venv/bin:$PATH \
     RAG_STATE_DIR=/data/state \
     RAG_DATA_ROOTS=/data/sources \
     RAG_MODEL_CACHE_DIR=/data/models \
+    HF_HOME=/data/models/huggingface \
     RAG_BIND_HOST=0.0.0.0 \
     RAG_PUBLIC_BIND_OK=true \
     RAG_PORT=8000

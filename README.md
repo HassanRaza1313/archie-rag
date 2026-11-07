@@ -9,12 +9,20 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
   its essential settings with one-line help; advanced settings are one click away; three presets cover most needs.
 - **Bounded agent.** Condenses follow-ups, retries weak retrievals with a rewritten or broader search, abstains with
   the closest passages instead of guessing, and checks that answers cite real sources.
+- **Reads what you actually have.** PDF, Word, PowerPoint, Excel, HTML, Markdown and text. A fast text reader
+  handles simple files; complex ones (text columns, borderless tables, scans, Office files) go to an optional
+  layout reader (Docling's layout and table-structure models). Each document is split by its shape: by headings,
+  per section for FAQs and clauses, per slide, by table rows, or without the references list for papers.
+- **Search that finds the right passage.** Optional build-time enrichment writes context, likely questions and
+  keywords for each passage (contextual retrieval); answers get the text around each hit (small-to-big).
+- **Inspect and fix ingestion.** A Documents page shows how every file was read and split, flags the ones likely
+  misread, and lets you edit or exclude passages; edits are searchable at once and survive rebuilds.
 - **Builds as jobs.** Incremental, resumable, cancellable, with a live stage timeline and zero-downtime index swaps.
 - **Telemetry that explains.** Per request: candidate funnel, agent decisions, latency waterfall, top chunks with
   dense and keyword ranks. Per build: stage counts, failures and a corpus profile. Correlated logs, Prometheus
   metrics, SLOs with burn-rate alerts, and a Health page that says it in plain words.
-- **Measured, not guessed.** Golden-set evaluation (hit@k, MRR, abstain rates) per config version, compared side by
-  side.
+- **Measured, not guessed.** Golden-set evaluation (hit@k, MRR, passage-level hits, abstain rates) per config
+  version, compared side by side, plus an ingestion benchmark (`bench/`) on deliberately hard documents.
 - **Runs anywhere.** Plain local code, split Docker services, or one all-in-one container. Ollama or any
   OpenAI-compatible model server. Embedded or server Qdrant.
 
@@ -41,7 +49,7 @@ containers and troubleshooting: [setup.md](setup.md).
 ## Development
 
 ```bash
-cd backend && .venv/bin/python -m pytest          # 178 tests; ruff + mypy configured in pyproject.toml
+cd backend && .venv/bin/python -m pytest          # 200 tests; ruff + mypy configured in pyproject.toml
 cd frontend && npm test && npm run lint && npm run typecheck
 ```
 

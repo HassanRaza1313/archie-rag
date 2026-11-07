@@ -45,7 +45,9 @@ async def test_full_build_indexes_sample_corpus(world: World, corpus: Path) -> N
     kb_id = world.create(corpus)
     job = await world.build(kb_id)
     assert job["status"] == "completed", job
-    assert all(stage["status"] == "completed" for stage in job["stages"])
+    statuses = {stage["stage"]: stage["status"] for stage in job["stages"]}
+    assert statuses.pop("enrich") == "skipped"  # enrichment is off by default
+    assert set(statuses.values()) == {"completed"}
     summary = job["summary"]
     assert summary["documents"] == 3 and summary["total_chunks"] >= 6 and summary["tables"] == 2
     kb = world.db.get_kb(kb_id)
@@ -159,11 +161,8 @@ async def test_broken_process_pool_falls_back_to_in_process(
         write_pdf(corpus / f"{name}.pdf", [PdfPage().text(72, 700, 11, f"Document {name} talks about compost piles.")])
 
     class CrashingPool:
-        def __init__(self, max_workers: int) -> None: ...
-        def __enter__(self) -> CrashingPool:
-            return self
-
-        def __exit__(self, *_: object) -> None: ...
+        def __init__(self, max_workers: int, **_: object) -> None: ...
+        def shutdown(self, **_: object) -> None: ...
         def submit(self, *_: object, **__: object) -> Future[object]:
             future: Future[object] = Future()
             future.set_exception(BrokenProcessPool("worker died"))

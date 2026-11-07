@@ -77,7 +77,24 @@ CREATE TABLE IF NOT EXISTS indexed_documents (
     content_hash TEXT NOT NULL,
     chunk_count INTEGER NOT NULL,
     indexed_at REAL NOT NULL,
+    report TEXT,
     PRIMARY KEY (collection, uri)
+);
+CREATE TABLE IF NOT EXISTS enrichment_cache (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chunk_edits (
+    kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    uri TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    text TEXT,
+    excluded INTEGER NOT NULL DEFAULT 0,
+    original TEXT NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (kb_id, uri, ordinal)
 );
 CREATE TABLE IF NOT EXISTS traces (
     id TEXT PRIMARY KEY,
@@ -123,6 +140,13 @@ class Database:
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.execute("PRAGMA busy_timeout=5000")
             self._conn.executescript(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was created; CREATE TABLE IF NOT EXISTS skips old tables."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(indexed_documents)")}
+        if "report" not in columns:
+            self._conn.execute("ALTER TABLE indexed_documents ADD COLUMN report TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -343,11 +367,58 @@ class Database:
         rows = self._all("SELECT uri, content_hash FROM indexed_documents WHERE collection = ?", (collection,))
         return {row["uri"]: row["content_hash"] for row in rows}
 
-    def record_document(self, collection: str, uri: str, content_hash: str, chunk_count: int) -> None:
+    def record_document(
+        self, collection: str, uri: str, content_hash: str, chunk_count: int, report: dict[str, Any] | None = None
+    ) -> None:
         self._run(
-            "INSERT OR REPLACE INTO indexed_documents VALUES (?, ?, ?, ?, ?)",
-            (collection, uri, content_hash, chunk_count, time.time()),
+            "INSERT OR REPLACE INTO indexed_documents VALUES (?, ?, ?, ?, ?, ?)",
+            (collection, uri, content_hash, chunk_count, time.time(), json.dumps(report) if report else None),
         )
+
+    def document_reports(self, collection: str) -> list[dict[str, Any]]:
+        rows = self._all(
+            "SELECT uri, content_hash, chunk_count, indexed_at, report FROM indexed_documents WHERE collection = ? "
+            "ORDER BY uri",
+            (collection,),
+        )
+        for row in rows:
+            row["report"] = json.loads(row["report"]) if row["report"] else {}
+        return rows
+
+    # Enrichment cache (build-time model calls, keyed by content and model)
+
+    def enrichment_get(self, key: str) -> dict[str, Any] | None:
+        row = self._one("SELECT value FROM enrichment_cache WHERE key = ?", (key,))
+        return json.loads(row["value"]) if row else None
+
+    def enrichment_put(self, key: str, value: dict[str, Any]) -> None:
+        self._run("INSERT OR REPLACE INTO enrichment_cache VALUES (?, ?, ?)", (key, json.dumps(value), time.time()))
+
+    # Chunk edits: hand corrections that survive rebuilds while the document is unchanged
+
+    def chunk_edits(self, kb_id: str, uri: str, content_hash: str) -> dict[int, dict[str, Any]]:
+        rows = self._all(
+            "SELECT ordinal, text, excluded FROM chunk_edits WHERE kb_id = ? AND uri = ? AND content_hash = ?",
+            (kb_id, uri, content_hash),
+        )
+        return {row["ordinal"]: {"text": row["text"], "excluded": bool(row["excluded"])} for row in rows}
+
+    def save_chunk_edit(
+        self, kb_id: str, uri: str, content_hash: str, ordinal: int, text: str | None, excluded: bool, original: str
+    ) -> None:
+        self._run(
+            "INSERT OR REPLACE INTO chunk_edits VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (kb_id, uri, content_hash, ordinal, text, int(excluded), original, time.time()),
+        )
+
+    def chunk_edit(self, kb_id: str, uri: str, ordinal: int) -> dict[str, Any] | None:
+        return self._one(
+            "SELECT text, excluded, original FROM chunk_edits WHERE kb_id = ? AND uri = ? AND ordinal = ?",
+            (kb_id, uri, ordinal),
+        )
+
+    def clear_chunk_edit(self, kb_id: str, uri: str, ordinal: int) -> None:
+        self._run("DELETE FROM chunk_edits WHERE kb_id = ? AND uri = ? AND ordinal = ?", (kb_id, uri, ordinal))
 
     def forget_documents(self, collection: str, uris: list[str] | None = None) -> None:
         if uris is None:

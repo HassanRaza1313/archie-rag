@@ -2,7 +2,8 @@
 
 A build turns a knowledge base's source into a searchable collection:
 
-    validate -> provision -> discover -> parse -> chunk -> embed -> index -> reconcile -> smoke_test -> activate
+    validate -> provision -> discover -> parse -> chunk -> enrich -> embed -> index -> reconcile -> smoke_test
+    -> activate
 
 Builds write into a collection named by the index fingerprint, so chat keeps using the previous collection
 until ``activate`` swaps it atomically. Unchanged documents (same content hash) are skipped, which also makes
@@ -13,17 +14,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import os
+import sys
 import time
+from collections import Counter, deque
 from collections.abc import AsyncIterator
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from typing import Any
 
 from ragkit.chunking import Chunk, chunk_document
 from ragkit.config import KnowledgeBaseConfig, ParsingConfig
+from ragkit.enrichment import Enrichment, enrich_chunks
 from ragkit.index import VectorIndex, collection_name, point_id
 from ragkit.parsing import ParsedDocument, parse_document
 from ragkit.privacy import Redactor
@@ -42,6 +47,7 @@ BUILD_STAGES = [
     "discover",
     "parse",
     "chunk",
+    "enrich",
     "embed",
     "index",
     "reconcile",
@@ -84,6 +90,29 @@ class _StageTracker:
         if detail is not None:
             fields["detail"] = detail
         self.db.update_stage(self.job_id, stage, **fields)
+
+
+def _limit_memory(megabytes: int) -> None:
+    """Process-pool initializer: cap the parser's address space so a runaway file cannot exhaust the host."""
+    if megabytes and sys.platform != "win32":
+        import resource
+
+        limit = megabytes * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+
+
+def _terminate(pool: Any) -> None:
+    # shortcut: ProcessPoolExecutor has no public way to stop a running task; kill its workers directly.
+    for process in list(getattr(pool, "_processes", {}).values()):
+        process.terminate()
+    with contextlib.suppress(Exception):
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _retrieve(future: asyncio.Future[Any]) -> None:
+    """Mark a finished future's exception as seen, so abandoned futures do not log "never retrieved"."""
+    if not future.cancelled():
+        future.exception()
 
 
 def _parse_in_worker(path: str, parsing: dict[str, Any]) -> ParsedDocument:
@@ -184,10 +213,12 @@ class Builder:
         )
         self._check(job_id)
 
-        profile = {"files": len(refs), "pages": 0, "ocr_pages": 0, "tables": 0, "chunks": 0}
+        profile = {"files": len(refs), "pages": 0, "ocr_pages": 0, "tables": 0, "chunks": 0, "duplicates": 0}
         chunk_tokens: list[int] = []
         failures = 0
-        for stage in ("parse", "chunk", "embed", "index"):
+        seen: dict[str, str] = {}  # normalised chunk text hash -> document that first had it
+        enrichment_counts: Counter[str] = Counter()
+        for stage in PIPELINE_STAGES:
             tracker.start(stage, items_in=len(todo) if stage == "parse" else 0)
         warnings: set[str] = set()
         async for ref, parsed, error in self._parse_all(todo, config.parsing):
@@ -205,7 +236,16 @@ class Builder:
             warnings.update(parsed.warnings)
             try:
                 count = await self._index_document(
-                    kb_id, collection, ref, hashes[ref.uri], parsed, config, tracker, chunk_tokens
+                    kb_id,
+                    collection,
+                    ref,
+                    hashes[ref.uri],
+                    parsed,
+                    config,
+                    tracker,
+                    chunk_tokens,
+                    seen,
+                    enrichment_counts,
                 )
             except Exception as exc:
                 failures += 1
@@ -213,17 +253,23 @@ class Builder:
                 tracker.add("index", items_failed=1)
                 continue
             profile["chunks"] += count
-        for stage in ("parse", "chunk", "embed", "index"):
+        profile["duplicates"] = enrichment_counts.pop("duplicates", 0)
+        for stage in PIPELINE_STAGES:
             counts = tracker.counters[stage]
             if stage == "parse" and counts["items_failed"] and not counts["items_out"]:
                 status = "failed"
+            elif stage == "enrich" and not config.enrichment.enabled:
+                status = "skipped"
             elif stage != "parse" and todo and not counts["items_in"]:
                 status = "skipped"  # nothing reached this stage
             else:
                 status = "completed"
-            tracker.finish(
-                stage, status=status, detail={"warnings": sorted(warnings)} if stage == "parse" and warnings else None
-            )
+            detail: dict[str, Any] | None = None
+            if stage == "parse" and warnings:
+                detail = {"warnings": sorted(warnings)}
+            elif stage == "enrich" and config.enrichment.enabled:
+                detail = dict(enrichment_counts)
+            tracker.finish(stage, status=status, detail=detail)
 
         tracker.start("reconcile", items_in=len(removed))
         self.index.delete_documents(collection, removed)
@@ -267,51 +313,94 @@ class Builder:
     ) -> AsyncIterator[tuple[DocumentRef, ParsedDocument | None, str | None]]:
         """Parse documents; yields (ref, document, error) as each finishes.
 
-        PDFs are CPU-heavy and go to a process pool when there are several; other files parse in a thread. If the
-        pool breaks (a worker crashed or could not start), the remaining documents are parsed in-process instead of
-        failing the build.
+        Plain text formats parse in a thread. Everything else parses in worker processes, each file under a time
+        limit (and, on Linux and macOS, a memory limit), so a file that hangs, crashes its parser or exhausts
+        memory fails on its own and the build carries on:
+
+        - a file over the time limit fails; the pool is restarted for the files still waiting;
+        - when a worker crashes, the files that were running are retried one at a time, so only the file that
+          crashes on its own fails;
+        - if worker processes cannot run at all on this host (no file has ever finished in one), the rest are
+          parsed in-process instead.
         """
-        heavy = [ref for ref in refs if ref.path.suffix.lower() == ".pdf"]
-        workers = min(self.parse_workers, len(heavy))
-        pooled = heavy if workers > 1 else []
-        for ref in refs:
-            if ref not in pooled:
+        light = [ref for ref in refs if ref.path.suffix.lower() in _INLINE_SUFFIXES]
+        for ref in light:
+            yield (ref, *await _parse_inline(ref, parsing))
+        queue = deque(ref for ref in refs if ref not in light)
+        if self.parse_workers <= 0:
+            while queue:
+                ref = queue.popleft()
                 yield (ref, *await _parse_inline(ref, parsing))
-        if not pooled:
             return
         loop = asyncio.get_running_loop()
-        finished: set[str] = set()
-        try:
-            with ProcessPoolExecutor(max_workers=workers) as pool:
-                futures = {
-                    loop.run_in_executor(pool, _parse_in_worker, str(ref.path), parsing.model_dump()): ref
-                    for ref in pooled
-                }
-                pending = set(futures)
-                while pending:
-                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        options = parsing.model_dump()
+        timeout = self.settings.parse_timeout_s
+        suspects: set[str] = set()  # running when a worker crashed: retried alone
+        pools_worked = False
+        while queue:
+            alone = queue[0].uri in suspects
+            if alone and not pools_worked:
+                logger.warning("parser processes are not usable here; parsing the remaining documents in-process")
+                while queue:
+                    ref = queue.popleft()
+                    yield (ref, *await _parse_inline(ref, parsing))
+                return
+            workers = 1 if alone else min(self.parse_workers, len(queue))
+            pool = ProcessPoolExecutor(
+                max_workers=workers, initializer=_limit_memory, initargs=(self.settings.parse_memory_mb,)
+            )
+            running: dict[asyncio.Future[Any], tuple[DocumentRef, float]] = {}
+            try:
+                while queue or running:
+                    while queue and len(running) < workers and (queue[0].uri in suspects) == alone:
+                        ref = queue.popleft()
+                        future = loop.run_in_executor(pool, _parse_in_worker, str(ref.path), options)
+                        future.add_done_callback(_retrieve)
+                        running[future] = (ref, time.monotonic())
+                    if not running:
+                        break  # the next file needs a pool of a different kind
+                    oldest = min(started for _, started in running.values())
+                    done, _ = await asyncio.wait(
+                        running, timeout=max(0.0, oldest + timeout - time.monotonic()), return_when=FIRST_COMPLETED
+                    )
+                    if not done:
+                        late = min(running, key=lambda future: running[future][1])
+                        ref, _ = running.pop(late)
+                        yield ref, None, f"parsing took longer than {timeout:.0f} s, so this file was skipped"
+                        queue.extendleft(reversed([other for other, _ in running.values()]))
+                        running.clear()
+                        _terminate(pool)
+                        break
+                    crashed = False
                     for future in done:
-                        ref = futures[future]
+                        ref, _ = running.pop(future)
                         try:
                             document = future.result()
                         except BrokenProcessPool:
-                            for other in futures:  # mark sibling failures as handled so asyncio does not log them
-                                if other.done() and not other.cancelled():
-                                    other.exception()
-                                else:
-                                    other.cancel()
-                            raise
+                            crashed = True
+                            if alone:
+                                yield ref, None, "the parser crashed on this file (it may have run out of memory)"
+                            else:
+                                suspects.add(ref.uri)
+                                queue.appendleft(ref)
                         except Exception as exc:
-                            finished.add(ref.uri)
+                            pools_worked = True
                             yield ref, None, f"{type(exc).__name__}: {exc}"
                         else:
-                            finished.add(ref.uri)
+                            pools_worked = True
                             yield ref, document, None
-        except BrokenProcessPool:
-            logger.warning("parser process pool broke; parsing the remaining documents in-process")
-            for ref in pooled:
-                if ref.uri not in finished:
-                    yield (ref, *await _parse_inline(ref, parsing))
+                    if crashed:
+                        for ref, _ in running.values():
+                            suspects.add(ref.uri)
+                            queue.appendleft(ref)
+                        running.clear()
+                        _terminate(pool)
+                        break
+            finally:
+                for future in running:
+                    future.cancel()
+                with contextlib.suppress(Exception):
+                    pool.shutdown(wait=False, cancel_futures=True)
 
     async def _index_document(
         self,
@@ -323,14 +412,42 @@ class Builder:
         config: KnowledgeBaseConfig,
         tracker: _StageTracker,
         chunk_tokens: list[int],
+        seen: dict[str, str],
+        enrichment_counts: Counter[str],
     ) -> int:
         chunks = chunk_document(parsed, config.chunking)
+        produced = len(chunks)
+        edits = self.db.chunk_edits(kb_id, ref.uri, content_hash)
+        kept: list[Chunk] = []
+        duplicates = 0
+        for chunk in chunks:
+            edit = edits.get(chunk.ordinal)
+            if edit and edit["text"]:
+                chunk.embed_text = chunk.embed_text.replace(chunk.text, edit["text"])
+                chunk.text = edit["text"]
+            # shortcut: duplicates are found within one build; an unchanged file indexed earlier is not compared.
+            digest = hashlib.sha1(" ".join(chunk.text.lower().split()).encode(), usedforsecurity=False).hexdigest()
+            if seen.setdefault(digest, ref.uri) != ref.uri and chunk.tokens >= 8:
+                duplicates += 1
+                continue
+            kept.append(chunk)
+        chunks = kept
+        enrichment_counts["duplicates"] += duplicates
         if config.privacy.redact_at_ingest:
             redactor = Redactor(config.privacy.detectors)
             for chunk in chunks:
                 chunk.text, chunk.embed_text = redactor.redact(chunk.text), redactor.redact(chunk.embed_text)
         tracker.add("chunk", items_in=1, items_out=len(chunks))
         chunk_tokens.extend(chunk.tokens for chunk in chunks)
+        enrichments = [Enrichment() for _ in chunks]
+        if config.enrichment.enabled and chunks:
+            provider = self.providers.get(config.enrichment.provider)
+            enrichments, counts = await enrich_chunks(chunks, parsed, config.enrichment, provider, self.db)
+            enrichment_counts.update(counts)
+            for chunk, enrichment in zip(chunks, enrichments, strict=True):
+                if extra := enrichment.search_text():
+                    chunk.embed_text = f"{extra}\n\n{chunk.embed_text}"
+            tracker.add("enrich", items_in=len(chunks), items_out=len(chunks) - counts["failed"])
         embedder = self.providers.get(config.embedding.provider)
         size = config.embedding.batch_size
         vectors: list[list[float]] = []
@@ -340,18 +457,41 @@ class Builder:
             tracker.add("embed", items_in=len(batch), items_out=len(batch))
         self.index.delete_documents(collection, [ref.uri])
         points = [
-            self._point(kb_id, ref, content_hash, parsed, chunk, vector)
-            for chunk, vector in zip(chunks, vectors, strict=True)
+            self._point(kb_id, ref, content_hash, parsed, chunk, vector, enrichment)
+            for chunk, vector, enrichment in zip(chunks, vectors, enrichments, strict=True)
         ]
         for start in range(0, len(points), 256):
             await asyncio.to_thread(self.index.upsert, collection, points[start : start + 256])
         tracker.add("index", items_in=len(points), items_out=len(points))
-        self.db.record_document(collection, ref.uri, content_hash, len(chunks))
+        templates = Counter(chunk.template for chunk in chunks)
+        for chunk in chunks:
+            if (edit := edits.get(chunk.ordinal)) and edit["excluded"]:
+                chunk.excluded = True
+        report = {
+            "reader": parsed.reader,
+            "template": templates.most_common(1)[0][0] if templates else None,
+            "pages": parsed.page_count,
+            "ocr_pages": parsed.ocr_pages,
+            "tables": parsed.table_count,
+            "layout_hints": parsed.layout_hints,
+            "warnings": parsed.warnings,
+            "chunks_produced": produced,
+            "duplicates": duplicates,
+            "edited": len(edits),
+            "quality": parse_quality(parsed, chunks),
+        }
+        self.db.record_document(collection, ref.uri, content_hash, len(chunks), report)
         return len(chunks)
 
     @staticmethod
     def _point(
-        kb_id: str, ref: DocumentRef, content_hash: str, parsed: ParsedDocument, chunk: Chunk, vector: list[float]
+        kb_id: str,
+        ref: DocumentRef,
+        content_hash: str,
+        parsed: ParsedDocument,
+        chunk: Chunk,
+        vector: list[float],
+        enrichment: Enrichment,
     ) -> tuple[str, list[float], dict[int, float], dict[str, Any]]:
         payload = {
             "kb_id": kb_id,
@@ -364,11 +504,20 @@ class Builder:
             "page_end": chunk.page_end,
             "content_type": chunk.content_type,
             "ordinal": chunk.ordinal,
+            "template": chunk.template,
             "token_count": chunk.tokens,
             "content_hash": content_hash,
             "ingested_at": time.time(),
             "text": chunk.text,
         }
+        if chunk.excluded:
+            payload["excluded"] = True
+        if enrichment.search_text():
+            payload["enrichment"] = {
+                "context": enrichment.context,
+                "questions": enrichment.questions,
+                "keywords": enrichment.keywords,
+            }
         return point_id(kb_id, content_hash, chunk.ordinal), vector, bm25_document_vector(chunk.embed_text), payload
 
     async def _smoke_test(self, collection: str, config: KnowledgeBaseConfig) -> int:
@@ -384,6 +533,32 @@ class Builder:
             )
             found += bool(dense or keyword)
         return found
+
+
+PIPELINE_STAGES = ("parse", "chunk", "enrich", "embed", "index")
+_INLINE_SUFFIXES = {".md", ".txt", ".html"}  # cheap, pure-Python parsers that cannot hang or crash the process
+_READABLE = set("abcdefghijklmnopqrstuvwxyz0123456789 .,;:!?'\"()-%$€£/&|›*#+=\n")
+
+
+def parse_quality(parsed: ParsedDocument, chunks: list[Chunk]) -> float:
+    """A 0-1 estimate of how well a document was read, to point people at the files worth checking.
+
+    Penalises complex layouts read by the fast reader, OCR'd pages, garbled text, fragment-sized chunks and
+    parser warnings.
+    """
+    if not chunks:
+        return 0.0
+    score = 1.0
+    if parsed.layout_hints and parsed.reader == "fast":
+        score -= 0.35
+    if parsed.page_count and parsed.ocr_pages:
+        score -= 0.2 * parsed.ocr_pages / parsed.page_count
+    text = " ".join(chunk.text for chunk in chunks).lower()
+    readable = sum(char in _READABLE for char in text) / max(1, len(text))
+    score -= max(0.0, 0.9 - readable) * 2
+    score -= 0.2 * sum(chunk.tokens < 12 for chunk in chunks) / len(chunks)
+    score -= min(0.2, 0.1 * len(parsed.warnings))
+    return round(max(0.0, min(1.0, score)), 2)
 
 
 def _percentile(values: list[int], pct: int) -> int:

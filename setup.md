@@ -105,7 +105,44 @@ Desktop; on Linux the compose file maps `host-gateway`, and Ollama must listen b
 
 Image practices: multi-stage builds, locked dependencies (`uv.lock`, `package-lock.json`), pinned base images,
 non-root user, health checks, `depends_on: service_healthy`, ONNX reranker (no PyTorch), OCR optional
-(`RAG_INSTALL_OCR=true` at build time).
+(`RAG_INSTALL_OCR=true` at build time), layout reader optional (`RAG_INSTALL_LAYOUT=true`: CPU-only PyTorch, about
+1.5 GB more).
+
+### Optional readers
+| Extra | Adds | Install locally |
+|---|---|---|
+| `ocr` | RapidOCR for scanned PDF pages in the fast reader | `pip install -e 'backend[ocr]'` |
+| `layout` | Docling layout reader: text columns, borderless tables, scans, Word, PowerPoint, Excel | `pip install -e 'backend[layout]'` |
+
+Without `layout`, Office files are skipped (validation says so) and complex PDFs use the fast reader with a
+warning. With it, `reader: auto` sends only the files that need it to Docling, so simple PDFs stay fast.
+
+### Measuring ingestion
+`bench/` holds a synthetic, license-clean corpus generator and a golden question set that stress parsing (two text
+columns, a borderless table, a scan, numbered clauses, a paper with references, Word, PowerPoint, Excel, HTML).
+`bench/run.py` builds it under several configs with local FastEmbed models and prints passage-level hit rates:
+
+```bash
+pip install -e 'backend[rerank,ocr,layout,bench]'
+python bench/make_corpus.py
+python bench/run.py
+```
+
+Results on the development laptop:
+
+| Config | Passage found first | Passage in top 5 | File found first | Files failed | Passages | Build |
+|---|---|---|---|---|---|---|
+| Original pipeline (fast reader, structure chunking) | 63 % | 63 % | 70 % | 3 of 9 | 8 | 13 s |
+| Layout reader for everything | 96 % | 100 % | 100 % | 0 | 15 | 63 s |
+| `reader: auto` | 96 % | 100 % | 100 % | 0 | 15 | 56 s |
+| `reader: auto` + `strategy: auto` (new defaults) | 96 % | 100 % | 100 % | 0 | 51 | 59 s |
+
+27 answerable questions and 3 unanswerable ones (all correctly declined in every config); FastEmbed
+`bge-small-en-v1.5` embeddings and the MiniLM reranker, CPU only, first build including model loading. A passage
+counts as found when one retrieved chunk contains every expected phrase. The original pipeline misses the Office
+files outright and misreads the two-column page. Templates do not change hit rates on documents this short, but cut
+each document into passages of its own shape (median 56 tokens instead of whole documents), so the answering model
+gets less unrelated text. Enrichment is not in this table: it needs a chat model at build time.
 
 ## 5. Configuration files
 
@@ -142,5 +179,7 @@ non-root user, health checks, `depends_on: service_healthy`, ONNX reranker (no P
 | Validate: model not available | `rag models pull`, or choose an installed model (the field suggests them) |
 | Slow answers on CPU | Preset *Low latency*, fewer candidates, or a GPU model server |
 | Build warns "pages without a text layer were skipped" | Scanned PDF: rebuild the image with `RAG_INSTALL_OCR=true` or `pip install 'ragkit[ocr]'` |
+| Validation says Word, PowerPoint or Excel files will be skipped | Install the layout reader: `RAG_INSTALL_LAYOUT=true` (Docker) or `pip install 'ragkit[layout]'`, and keep the reader on `auto` |
+| A file failed with "parsing took longer than …" | Raise `RAG_PARSE_TIMEOUT_S`; very long scanned PDFs on CPU can take minutes with the layout reader |
 | Port already in use | Change `RAG_UI_PORT` / `RAG_API_PORT` / `RAG_PORT` in `.env` |
 | Validate warns "embedded Qdrant searches by brute force" | Expected in embedded mode; use `rag up` (server mode) for large corpora |

@@ -4,6 +4,11 @@ PDF text comes from pdfium (fast, permissive licence): larger or bold short line
 split paragraphs, and repeated margin lines (running headers, footers, page numbers) are dropped. Ruled tables are
 found with pdfplumber, only on pages that contain drawn paths, and become markdown. Pages without a text layer are
 OCR'd when the optional ``ocr`` extra is installed. Add a format by registering a parser in ``PARSERS``.
+
+The ``engine`` setting picks the reader. ``fast`` uses the built-in parsers here. ``layout`` sends every rich
+format to the layout reader (``layout.py``: Docling's page-layout and table-structure models). ``auto`` uses the
+layout reader for Office files and for PDFs whose pages the fast reader flags as complex (columns, borderless
+tables, scans), and the fast reader for everything else.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ import statistics
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Literal
 
@@ -39,6 +45,9 @@ class ParsedDocument:
     ocr_pages: int = 0
     table_count: int = 0
     warnings: list[str] = field(default_factory=list)
+    reader: str = "fast"
+    file_type: str = ""
+    layout_hints: list[str] = field(default_factory=list)  # why the fast reader may have misread this document
 
 
 @dataclass
@@ -52,16 +61,48 @@ class _Line:
     edge: bool = False  # inside the top/bottom 15%: where running headers can sit
     bold: bool = False
     left: float = 0.0
+    gapped: bool = False  # a wide horizontal gap inside the line: columns or a borderless table
 
 
 _SENTENCE_END = re.compile(r"[.!?:;\"'”’)\]]$")
 
 
+LAYOUT_ONLY = {".docx", ".pptx", ".xlsx"}
+
+
 def parse_document(path: Path, config: ParsingConfig) -> ParsedDocument:
-    parser = PARSERS.get(path.suffix.lower())
+    document = _read(path, config)
+    document.file_type = path.suffix.lower()
+    return document
+
+
+def _read(path: Path, config: ParsingConfig) -> ParsedDocument:
+    suffix = path.suffix.lower()
+    plain = suffix in (".md", ".txt", ".html")  # the built-in HTML reader skips page chrome that Docling keeps
+    if not plain and (config.engine == "layout" or (config.engine == "auto" and suffix in LAYOUT_ONLY)):
+        from ragkit.layout import parse_layout
+
+        return parse_layout(path, config)
+    parser = PARSERS.get(suffix)
     if parser is None:
-        raise ValueError(f"no parser for '{path.suffix}' files")
-    return parser(path, config)
+        if suffix in LAYOUT_ONLY:
+            raise ValueError(f"'{suffix}' files need the layout reader (set the reader to auto or layout)")
+        raise ValueError(f"no parser for '{suffix}' files")
+    document = parser(path, config)
+    if config.engine == "auto" and document.layout_hints:
+        from ragkit.layout import layout_available, parse_layout
+
+        if not layout_available():
+            document.warnings.append("some pages have complex layouts: install the 'layout' extra to read them better")
+            return document
+        try:
+            better = parse_layout(path, config)
+        except Exception as exc:
+            document.warnings.append(f"layout reader failed ({type(exc).__name__}); used the fast reader")
+            return document
+        better.layout_hints = document.layout_hints
+        return better
+    return document
 
 
 # PDF
@@ -71,6 +112,8 @@ _BOLD_FONT = re.compile(r"bold|black|heavy|semibold|demi", re.IGNORECASE)
 _PDFIUM_HYPHEN = "\x02"
 _CONTENTS_HEADING = re.compile(r"^\s*(table of )?contents\s*$", re.IGNORECASE)
 _TABLE_MIN_PATHS = 4  # pages with fewer drawn paths cannot hold a ruled table, so the slow table finder is skipped
+_GAP_EM = 4.0  # a gap wider than this many font sizes inside one line separates columns or table cells
+_GAPPED_SHARE = 0.25  # pages where this share of lines is gapped get the layout reader in auto mode
 Box = tuple[float, float, float, float]  # x0, top, x1, bottom (top-down page coordinates)
 
 
@@ -90,7 +133,7 @@ def parse_pdf(path: Path, config: ParsingConfig) -> ParsedDocument:
 
     lines: list[_Line] = []
     tables: list[tuple[int, float, Block]] = []  # (page, top, block) for placing tables in reading order
-    ocr_pages = 0
+    ocr_pages = complex_pages = 0
     warnings: list[str] = []
     document = pdfium.PdfDocument(path)
     plumber: Any = None
@@ -119,6 +162,9 @@ def parse_pdf(path: Path, config: ParsingConfig) -> ParsedDocument:
                     page_lines = ocr_lines
                 elif warning and warning not in warnings:
                     warnings.append(warning)
+            gapped = sum(line.gapped for line in page_lines)
+            if gapped >= 3 and gapped >= _GAPPED_SHARE * len(page_lines):
+                complex_pages += 1
             lines.extend(page_lines)
     finally:
         document.close()
@@ -129,7 +175,10 @@ def parse_pdf(path: Path, config: ParsingConfig) -> ParsedDocument:
     blocks = _lines_to_blocks(lines, tables)
     if not title:
         title = next((b.text for b in blocks if b.kind == "heading"), path.stem)
-    return ParsedDocument(title, blocks, page_count, ocr_pages, len(tables), warnings)
+    hints = [f"{complex_pages} page(s) with columns or borderless tables"] if complex_pages else []
+    if ocr_pages or any("text layer" in warning for warning in warnings):
+        hints.append("scanned pages")
+    return ParsedDocument(title, blocks, page_count, ocr_pages, len(tables), warnings, layout_hints=hints)
 
 
 def _path_count(page: Any) -> int:
@@ -164,7 +213,10 @@ def _text_lines(page: Any, number: int, height: float, boxes: list[Box]) -> list
             margin, edge = _bands(top, bottom, height)
             size = statistics.median(c.size for c in visible)
             left = min(c.left for c in visible)
-            lines.append(_Line(text, size, top, bottom, number, margin=margin, edge=edge, bold=bold, left=left))
+            gapped = any(b.left - a.left > _GAP_EM * max(size, 1.0) for a, b in itertools.pairwise(visible))
+            lines.append(
+                _Line(text, size, top, bottom, number, margin=margin, edge=edge, bold=bold, left=left, gapped=gapped)
+            )
         chars.clear()
 
     try:
@@ -430,8 +482,92 @@ def parse_text(path: Path, config: ParsingConfig) -> ParsedDocument:
     return ParsedDocument(path.stem, [Block("text", p, 1, 1) for p in paragraphs])
 
 
+class _HtmlBlocks(HTMLParser):
+    """Headings, paragraphs, list items and tables from HTML; scripts, styles and page chrome are skipped."""
+
+    SKIP = frozenset({"script", "style", "nav", "header", "footer", "noscript", "template", "svg"})
+    BREAKS = frozenset({"p", "li", "div", "section", "article", "blockquote", "pre", "dd", "dt", "br", "tr", "table"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocks: list[Block] = []
+        self.title = ""
+        self._text: list[str] = []
+        self._skip = 0
+        self._heading = 0
+        self._in_title = False
+        self._rows: list[list[str]] | None = None
+        self._cell: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self.SKIP:
+            self._skip += 1
+        elif tag == "title":
+            self._in_title = True
+        elif re.fullmatch(r"h[1-6]", tag):
+            self._flush()
+            self._heading = min(3, int(tag[1]))
+        elif tag == "table":
+            self._flush()
+            self._rows = []
+        elif tag == "tr" and self._rows is not None:
+            self._rows.append([])
+        elif tag in ("td", "th") and self._rows is not None:
+            self._cell = []
+        elif tag in self.BREAKS:
+            self._flush()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self.SKIP:
+            self._skip = max(0, self._skip - 1)
+        elif tag == "title":
+            self._in_title = False
+        elif re.fullmatch(r"h[1-6]", tag):
+            text = " ".join("".join(self._text).split())
+            if text:
+                self.blocks.append(Block("heading", text, 1, 1, self._heading))
+            self._text.clear()
+            self._heading = 0
+        elif tag in ("td", "th") and self._cell is not None and self._rows:
+            self._rows[-1].append(" ".join("".join(self._cell).split()))
+            self._cell = None
+        elif tag == "table" and self._rows is not None:
+            if markdown := table_to_markdown([list(row) for row in self._rows if row]):
+                self.blocks.append(Block("table", markdown, 1, 1))
+            self._rows = None
+        elif tag in self.BREAKS:
+            self._flush()
+
+    def handle_data(self, data: str) -> None:
+        if self._skip:
+            return
+        if self._in_title:
+            self.title += data
+        elif self._cell is not None:
+            self._cell.append(data)
+        elif self._rows is None:
+            self._text.append(data)
+
+    def _flush(self) -> None:
+        text = " ".join("".join(self._text).split())
+        if text and not self._heading:
+            self.blocks.append(Block("text", text, 1, 1))
+            self._text.clear()
+
+
+def parse_html(path: Path, config: ParsingConfig) -> ParsedDocument:
+    reader = _HtmlBlocks()
+    reader.feed(path.read_text(encoding="utf-8", errors="replace"))
+    reader.close()
+    reader._flush()
+    blocks = [b for b in reader.blocks if config.tables == "markdown" or b.kind != "table"]
+    title = " ".join(reader.title.split()) or next((b.text for b in blocks if b.kind == "heading"), path.stem)
+    return ParsedDocument(title, blocks, table_count=sum(b.kind == "table" for b in blocks))
+
+
 PARSERS: dict[str, Callable[[Path, ParsingConfig], ParsedDocument]] = {
     ".pdf": parse_pdf,
     ".md": parse_markdown,
     ".txt": parse_text,
+    ".html": parse_html,
 }

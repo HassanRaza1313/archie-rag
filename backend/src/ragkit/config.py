@@ -39,6 +39,10 @@ def stage(title: str, summary: str, *, rebuild: bool = False) -> ConfigDict:
     return ConfigDict(extra="forbid", title=title, json_schema_extra={"summary": summary, "rebuild": rebuild})
 
 
+FileType = Literal[".pdf", ".md", ".txt", ".html", ".docx", ".pptx", ".xlsx"]
+FILE_TYPES: tuple[FileType, ...] = (".pdf", ".md", ".txt", ".html", ".docx", ".pptx", ".xlsx")
+
+
 class SourceConfig(BaseModel):
     model_config = stage("Data source", "Where the documents come from.", rebuild=True)
     type: Literal["local_folder", "uploads"] = option(
@@ -47,9 +51,7 @@ class SourceConfig(BaseModel):
     path: str = option(
         "data/sources/sample", "Folder", "Folder to index. Must be inside one of the allowed data roots."
     )
-    file_types: list[Literal[".pdf", ".md", ".txt"]] = option(
-        [".pdf", ".md", ".txt"], "File types", "Only files with these extensions are indexed."
-    )
+    file_types: list[FileType] = option(list(FILE_TYPES), "File types", "Only files with these extensions are indexed.")
     include: list[str] = option(
         [], "Include patterns", "Glob patterns (e.g. reports/**/*.pdf). Empty = everything.", tier="advanced"
     )
@@ -59,6 +61,13 @@ class SourceConfig(BaseModel):
 
 class ParsingConfig(BaseModel):
     model_config = stage("Parsing", "How documents are turned into structured text.", rebuild=True)
+    engine: Literal["auto", "fast", "layout"] = option(
+        "auto",
+        "Reader",
+        "auto: the layout reader for Office files, scans and complex PDF pages, the fast reader otherwise. "
+        "fast: built-in text reader (PDF, Markdown, text, HTML). layout: the layout reader for everything. "
+        "The layout reader needs the 'layout' extra.",
+    )
     ocr: Literal["auto", "off", "force"] = option(
         "auto", "OCR", "auto: OCR pages without a text layer. force: OCR every page. Needs the 'ocr' extra."
     )
@@ -70,10 +79,12 @@ class ParsingConfig(BaseModel):
 
 class ChunkingConfig(BaseModel):
     model_config = stage("Chunking", "How text is split into retrievable pieces.", rebuild=True)
-    strategy: Literal["structure", "fixed"] = option(
-        "structure",
+    strategy: Literal["auto", "structure", "sections", "slides", "rows", "fixed"] = option(
+        "auto",
         "Strategy",
-        "structure: follow headings and paragraphs (recommended). fixed: equal-size windows.",
+        "auto: choose per document (recommended). structure: follow headings and paragraphs. sections: one "
+        "chunk per section (FAQs, clauses). slides: one per slide or page. rows: small groups of table rows "
+        "(spreadsheets). fixed: equal-size windows.",
     )
     chunk_size: int = option(
         512, "Chunk size (tokens)", "Smaller = more precise hits; larger = more context per hit.", ge=64, le=4096
@@ -89,12 +100,48 @@ class ChunkingConfig(BaseModel):
     )
 
 
+class EnrichmentConfig(BaseModel):
+    model_config = stage(
+        "Enrichment",
+        "A chat model describes each chunk at build time so search finds it more often. One model call per chunk.",
+        rebuild=True,
+    )
+    context: bool = option(
+        False,
+        "Add context to each chunk",
+        "Write a sentence placing each chunk in its document (contextual retrieval). Biggest accuracy gain.",
+    )
+    questions: bool = option(False, "Write likely questions", "Add questions each chunk answers to its search text.")
+    keywords: bool = option(False, "Write keywords", "Add search keywords and synonyms to each chunk.")
+    provider: Literal["ollama", "openai"] = option("ollama", "Provider", "Where the enrichment model runs.")
+    model: str = option(
+        "qwen3.5:9b", "Model", "Chat model for enrichment. A small fast model is usually enough.", min_length=1
+    )
+    document_tokens: int = option(
+        3000,
+        "Document excerpt (tokens)",
+        "How much of the document the model sees for each chunk.",
+        tier="advanced",
+        ge=200,
+        le=100_000,
+    )
+    concurrency: int = option(4, "Parallel calls", "Model calls in flight at once.", tier="advanced", ge=1, le=64)
+
+    @property
+    def enabled(self) -> bool:
+        return self.context or self.questions or self.keywords
+
+
 class EmbeddingConfig(BaseModel):
     model_config = stage("Embedding", "The model that turns text into vectors.", rebuild=True)
-    provider: Literal["ollama", "openai"] = option(
-        "ollama", "Provider", "Ollama, or any OpenAI-compatible server (LM Studio, vLLM, OpenAI)."
+    provider: Literal["ollama", "openai", "fastembed"] = option(
+        "ollama",
+        "Provider",
+        "Ollama, any OpenAI-compatible server (LM Studio, vLLM, OpenAI), or fastembed: local ONNX models, no server.",
     )
-    model: str = option("nomic-embed-text", "Model", "Embedding model name at the provider.")
+    model: str = option(
+        "nomic-embed-text", "Model", "Embedding model name at the provider (fastembed: e.g. BAAI/bge-small-en-v1.5)."
+    )
     batch_size: int = option(32, "Batch size", "Texts per embedding request.", tier="advanced", ge=1, le=512)
 
 
@@ -170,6 +217,12 @@ class ContextConfig(BaseModel):
     )
     compression: Literal["off", "extractive"] = option(
         "off", "Compression", "extractive: keep only sentences that match the question.", tier="advanced"
+    )
+    expand: Literal["off", "neighbors", "section"] = option(
+        "neighbors",
+        "Surrounding text",
+        "Search small chunks, then give the model more around each hit. neighbors: the chunk before and after. "
+        "section: the whole section (within the token budget).",
     )
 
 
@@ -279,7 +332,7 @@ class TelemetryConfig(BaseModel):
     )
 
 
-INDEX_STAGES = ("source", "parsing", "chunking", "embedding", "index")
+INDEX_STAGES = ("source", "parsing", "chunking", "enrichment", "embedding", "index")
 
 
 class KnowledgeBaseConfig(BaseModel):
@@ -287,6 +340,7 @@ class KnowledgeBaseConfig(BaseModel):
     source: SourceConfig = Field(default_factory=SourceConfig)
     parsing: ParsingConfig = Field(default_factory=ParsingConfig)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
+    enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     index: IndexConfig = Field(default_factory=IndexConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)

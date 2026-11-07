@@ -35,6 +35,9 @@ class Settings(BaseModel):
     ui_dist_dir: Path | None = None
     max_upload_mb: int = 100
     request_timeout_s: float = 300.0
+    # Each file parses in a worker process with these limits; a file that exceeds them fails on its own.
+    parse_timeout_s: float = Field(600.0, gt=0)
+    parse_memory_mb: int = Field(0, ge=0)  # address-space limit per parser process (Linux and macOS); 0 = none
     # Service level objectives, evaluated from stored traces (/api/slo) and mirrored in Prometheus rules.
     slo_availability: float = Field(0.99, gt=0, lt=1)
     slo_latency_target: float = Field(0.95, gt=0, lt=1)

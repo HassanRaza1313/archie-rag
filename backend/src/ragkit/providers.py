@@ -1,4 +1,5 @@
-"""Model providers: embeddings and chat (Ollama, OpenAI-compatible), and cross-encoder reranking.
+"""Model providers: embeddings and chat (Ollama, OpenAI-compatible), local ONNX embeddings (FastEmbed), and
+cross-encoder reranking.
 
 Add a provider by implementing ``ModelProvider`` and registering it in ``PROVIDERS``.
 """
@@ -26,6 +27,8 @@ _EMBED_PREFIXES: dict[str, tuple[str, str]] = {
     "nomic-embed": ("search_document: ", "search_query: "),
     "e5": ("passage: ", "query: "),
     "mxbai-embed": ("", "Represent this sentence for searching relevant passages: "),
+    "bge-small-en": ("", "Represent this sentence for searching relevant passages: "),
+    "bge-base-en": ("", "Represent this sentence for searching relevant passages: "),
 }
 
 
@@ -205,6 +208,48 @@ class OpenAIProvider(_HttpProvider):
         return sorted(model["id"] for model in response.json().get("data", []))
 
 
+class FastEmbedProvider:
+    """Local ONNX embeddings via FastEmbed: no model server needed. Embedding only; it has no chat models."""
+
+    is_remote = False
+
+    def __init__(self, cache_dir: Path | None) -> None:
+        self.cache_dir = cache_dir
+        self._models: dict[str, Any] = {}
+
+    def _model(self, name: str) -> Any:
+        if name not in self._models:
+            try:
+                from fastembed import TextEmbedding
+            except ImportError as exc:
+                raise ProviderError("local embeddings need the 'rerank' extra: pip install 'ragkit[rerank]'") from exc
+            try:
+                self._models[name] = TextEmbedding(name, cache_dir=str(self.cache_dir) if self.cache_dir else None)
+            except ValueError as exc:
+                raise ProviderError(f"'{name}' is not a FastEmbed embedding model") from exc
+        return self._models[name]
+
+    async def embed(self, model: str, texts: list[str], kind: EmbedKind) -> list[list[float]]:
+        prefix = embed_prefix(model, kind)
+        encoder = await asyncio.to_thread(self._model, model)
+        vectors = await asyncio.to_thread(lambda: list(encoder.embed([prefix + t for t in texts])))
+        return [vector.tolist() for vector in vectors]
+
+    async def chat(self, messages: list[dict[str, str]], options: ChatOptions) -> AsyncIterator[str]:
+        raise ProviderError("fastembed provides embeddings only; choose Ollama or OpenAI for generation")
+        yield ""  # pragma: no cover - makes this an async generator like the other providers
+
+    async def list_models(self) -> list[str]:
+        try:
+            from fastembed import TextEmbedding
+        except ImportError:
+            return []
+        return sorted(model["model"] for model in TextEmbedding.list_supported_models())
+
+    async def ping(self) -> bool:
+        return bool(await self.list_models())
+
+
 class Reranker(Protocol):
     def score(self, query: str, texts: list[str]) -> list[float]:
         """Relevance probabilities in [0, 1], one per text."""
@@ -247,6 +292,7 @@ class ProviderRegistry:
         self._providers: dict[str, ModelProvider] = {
             "ollama": OllamaProvider(self.client, settings.ollama_url),
             "openai": OpenAIProvider(self.client, settings.openai_base_url, settings.openai_api_key),
+            "fastembed": FastEmbedProvider(settings.model_cache_dir),
         }
         self._rerankers: dict[str, Reranker] = {}
 

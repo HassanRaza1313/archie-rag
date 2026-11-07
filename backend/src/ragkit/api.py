@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 from ragkit import __version__
 from ragkit.agent import Agent, ChatRequest, suggest_questions
 from ragkit.cache import AnswerCache
+from ragkit.chunking import embed_text_for
 from ragkit.config import (
     INDEX_STAGES,
     PRESET_DESCRIPTIONS,
@@ -36,9 +37,11 @@ from ragkit.config import (
     deep_merge,
     preset_config,
 )
+from ragkit.enrichment import Enrichment
 from ragkit.evaluation import GoldenItem, evaluate
 from ragkit.index import BUILTIN_FILTER_FIELDS, VectorIndex
 from ragkit.jobs import BUILD_STAGES, Builder, is_terminal, run_worker
+from ragkit.layout import layout_available
 from ragkit.memory import SessionMemory
 from ragkit.observability import (
     UNMATCHED_ROUTE,
@@ -48,11 +51,13 @@ from ragkit.observability import (
     evaluate_slos,
     traceparent,
 )
+from ragkit.parsing import LAYOUT_ONLY
 from ragkit.providers import ProviderError, ProviderRegistry
 from ragkit.settings import Settings
 from ragkit.sources import SourceError, discover, resolve_root
 from ragkit.storage import Database, JobConflictError
 from ragkit.telemetry import request_id_var
+from ragkit.textutil import bm25_document_vector, estimate_tokens
 
 logger = logging.getLogger(__name__)
 access_logger = logging.getLogger("ragkit.access")
@@ -92,6 +97,13 @@ class ChatBody(BaseModel):
     session_id: str | None = Field(default=None, max_length=100)
     filters: dict[str, str | int | list[str]] = Field(default_factory=dict, max_length=10)
     profile: dict[str, Annotated[str, Field(max_length=300)]] = Field(default_factory=dict, max_length=5)
+
+
+class ChunkEditBody(BaseModel):
+    uri: str = Field(min_length=1, max_length=2000)
+    ordinal: int = Field(ge=0)
+    text: str | None = Field(default=None, min_length=1, max_length=40_000)
+    excluded: bool = False
 
 
 class EvalBody(BaseModel):
@@ -285,7 +297,7 @@ def create_app(
         return preset_config(name).model_dump()
 
     @app.get("/api/models")
-    async def models(context: Ctx, provider: Literal["ollama", "openai"] = "ollama") -> dict[str, Any]:
+    async def models(context: Ctx, provider: Literal["ollama", "openai", "fastembed"] = "ollama") -> dict[str, Any]:
         return {"provider": provider, "models": await context.providers.get(provider).list_models()}
 
     # Knowledge bases and configs
@@ -434,6 +446,98 @@ def create_app(
         payloads = await asyncio.to_thread(context.index.sample_payloads, kb["active_collection"], 64)
         return suggest_questions(payloads)
 
+    # Documents: how each file was read and chunked, with hand corrections
+
+    def active_collection(context: AppContext, kb_id: str) -> str:
+        kb = kb_or_404(context, kb_id)
+        if not kb["active_collection"]:
+            raise HTTPException(409, "this chatbot has not been built yet")
+        return str(kb["active_collection"])
+
+    @app.get("/api/kbs/{kb_id}/documents")
+    async def documents(kb_id: str, context: Ctx) -> list[dict[str, Any]]:
+        return context.db.document_reports(active_collection(context, kb_id))
+
+    @app.get("/api/kbs/{kb_id}/documents/chunks")
+    async def document_chunks(kb_id: str, uri: str, context: Ctx) -> dict[str, Any]:
+        collection = active_collection(context, kb_id)
+        rows = await asyncio.to_thread(context.index.document_chunks, collection, uri)
+        if not rows:
+            raise HTTPException(404, "no indexed chunks for that document")
+        edits = context.db.chunk_edits(kb_id, uri, str(rows[0].get("content_hash", "")))
+        keys = (
+            "id",
+            "ordinal",
+            "text",
+            "section",
+            "page_start",
+            "page_end",
+            "content_type",
+            "template",
+            "token_count",
+            "enrichment",
+            "excluded",
+        )
+        chunks = [{key: row.get(key) for key in keys} | {"edited": row.get("ordinal") in edits} for row in rows]
+        return {"uri": uri, "title": rows[0].get("title"), "chunks": chunks}
+
+    async def reindex_chunk(
+        context: AppContext, kb_id: str, collection: str, payload: dict[str, Any], point: str, text: str
+    ) -> None:
+        """Re-embed one chunk with new text, the same way the builder would, and replace its point."""
+        _, config = context.db.get_config(kb_id)
+        searchable = embed_text_for(
+            str(payload.get("title", "")), str(payload.get("section", "")), text, config.chunking.section_headers
+        )
+        enrichment = payload.get("enrichment") or {}
+        if extra := Enrichment(**enrichment).search_text():
+            searchable = f"{extra}\n\n{searchable}"
+        vector = (
+            await context.providers.get(config.embedding.provider).embed(
+                config.embedding.model, [searchable], "document"
+            )
+        )[0]
+        payload = {**payload, "text": text, "token_count": estimate_tokens(text)}
+        await asyncio.to_thread(
+            context.index.upsert, collection, [(point, vector, bm25_document_vector(searchable), payload)]
+        )
+
+    @app.patch("/api/kbs/{kb_id}/documents/chunks")
+    async def edit_chunk(kb_id: str, body: ChunkEditBody, context: Ctx) -> dict[str, Any]:
+        collection = active_collection(context, kb_id)
+        rows = await asyncio.to_thread(
+            context.index.document_chunks, collection, body.uri, (body.ordinal, body.ordinal)
+        )
+        if not rows:
+            raise HTTPException(404, "chunk not found")
+        payload = rows[0]
+        point = str(payload.pop("id"))
+        previous = context.db.chunk_edit(kb_id, body.uri, body.ordinal)
+        original = previous["original"] if previous else str(payload.get("text", ""))
+        if body.text is not None and body.text != payload.get("text"):
+            await reindex_chunk(context, kb_id, collection, payload, point, body.text)
+        await asyncio.to_thread(context.index.set_payload, collection, point, {"excluded": body.excluded})
+        text = body.text if body.text is not None else (previous["text"] if previous else None)
+        context.db.save_chunk_edit(
+            kb_id, body.uri, str(payload.get("content_hash", "")), body.ordinal, text, body.excluded, original
+        )
+        return {"ordinal": body.ordinal, "text": text or payload.get("text"), "excluded": body.excluded}
+
+    @app.delete("/api/kbs/{kb_id}/documents/chunks", status_code=204)
+    async def restore_chunk(kb_id: str, uri: str, ordinal: int, context: Ctx) -> None:
+        collection = active_collection(context, kb_id)
+        previous = context.db.chunk_edit(kb_id, uri, ordinal)
+        if previous is None:
+            return
+        rows = await asyncio.to_thread(context.index.document_chunks, collection, uri, (ordinal, ordinal))
+        if rows:
+            payload = rows[0]
+            point = str(payload.pop("id"))
+            if payload.get("text") != previous["original"]:
+                await reindex_chunk(context, kb_id, collection, payload, point, previous["original"])
+            await asyncio.to_thread(context.index.set_payload, collection, point, {"excluded": False})
+        context.db.clear_chunk_edit(kb_id, uri, ordinal)
+
     @app.get("/api/kbs/{kb_id}/uploads")
     async def list_uploads(kb_id: str, context: Ctx) -> list[dict[str, Any]]:
         kb_or_404(context, kb_id)
@@ -519,7 +623,32 @@ async def _validate(context: AppContext, kb: dict[str, Any], config: KnowledgeBa
         checks["source"] = {"ok": False}
         errors.append({"loc": ["source", "path"], "msg": str(exc)})
 
-    for stage_name in ("embedding", "generation"):
+    office = sum(
+        count for suffix, count in checks.get("source", {}).get("by_type", {}).items() if suffix in LAYOUT_ONLY
+    )
+    if office and (config.parsing.engine == "fast" or not layout_available()):
+        reason = (
+            "the reader is set to fast" if config.parsing.engine == "fast" else "the 'layout' extra is not installed"
+        )
+        warnings.append(
+            {
+                "stage": "parsing",
+                "msg": f"{office} Word, PowerPoint or Excel file(s) will be skipped: {reason}.",
+            }
+        )
+    if config.enrichment.enabled:
+        stats = context.db.collection_stats(kb["active_collection"]) if kb.get("active_collection") else {}
+        estimate = f" (about {stats['chunks']} for the last build)" if stats.get("chunks") else ""
+        warnings.append(
+            {
+                "stage": "enrichment",
+                "msg": f"Enrichment makes one model call per passage on the first build{estimate}; "
+                "unchanged passages are reused after that.",
+            }
+        )
+
+    stages = ("embedding", "generation", "enrichment") if config.enrichment.enabled else ("embedding", "generation")
+    for stage_name in stages:
         stage = getattr(config, stage_name)
         try:
             available = await context.providers.get(stage.provider).list_models()

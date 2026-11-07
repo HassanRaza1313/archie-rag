@@ -100,9 +100,14 @@ class VectorIndex:
                 self._call(
                     "create_payload_index", name, field_name=field_name, field_schema=models.PayloadSchemaType.KEYWORD
                 )
-            self._call(
-                "create_payload_index", name, field_name="page_start", field_schema=models.PayloadSchemaType.INTEGER
-            )
+            self._call("create_payload_index", name, field_name="excluded", field_schema=models.PayloadSchemaType.BOOL)
+            for integer_field in ("page_start", "ordinal"):
+                self._call(
+                    "create_payload_index",
+                    name,
+                    field_name=integer_field,
+                    field_schema=models.PayloadSchemaType.INTEGER,
+                )
 
     def drop(self, name: str) -> None:
         if self.exists(name):
@@ -158,7 +163,8 @@ class VectorIndex:
         search_ef: int = 64,
     ) -> tuple[list[Hit], list[Hit]]:
         """Run the dense and keyword queries in one round trip; returns (dense hits, keyword hits)."""
-        query_filter = _build_filter(filters)
+        query_filter = _build_filter(filters) or models.Filter()
+        query_filter.must_not = [models.FieldCondition(key="excluded", match=models.MatchValue(value=True))]
         requests, kinds = [], []
         if dense is not None:
             params = models.SearchParams(hnsw_ef=search_ef) if self.mode == "server" else None  # embedded: exact
@@ -184,6 +190,48 @@ class VectorIndex:
         for kind, response in zip(kinds, responses, strict=True):
             results[kind] = [Hit(str(p.id), float(p.score), dict(p.payload or {})) for p in response.points]
         return results[DENSE], results[SPARSE]
+
+    def document_chunks(
+        self,
+        name: str,
+        uri: str,
+        ordinals: tuple[int, int] | None = None,
+        section: str | None = None,
+        limit: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        """Payloads of one document's chunks in reading order, optionally an ordinal range or one section."""
+        conditions: list[models.Condition] = [
+            models.FieldCondition(key="document_uri", match=models.MatchValue(value=uri))
+        ]
+        if ordinals is not None:
+            conditions.append(
+                models.FieldCondition(key="ordinal", range=models.Range(gte=ordinals[0], lte=ordinals[1]))
+            )
+        if section is not None:
+            conditions.append(models.FieldCondition(key="section", match=models.MatchValue(value=section)))
+        payloads: list[dict[str, Any]] = []
+        offset = None
+        while len(payloads) < limit:
+            points, offset = self._call(
+                "scroll",
+                name,
+                scroll_filter=models.Filter(must=conditions),
+                limit=min(256, limit - len(payloads)),
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            payloads.extend({"id": str(point.id), **(point.payload or {})} for point in points)
+            if offset is None:
+                break
+        return sorted(payloads, key=lambda payload: int(payload.get("ordinal", 0)))
+
+    def payload(self, name: str, point: str) -> dict[str, Any] | None:
+        points = self._call("retrieve", name, ids=[point], with_payload=True, with_vectors=False)
+        return dict(points[0].payload or {}) if points else None
+
+    def set_payload(self, name: str, point: str, payload: dict[str, Any]) -> None:
+        self._call("set_payload", name, payload=payload, points=[point], wait=True)
 
     def sample_payloads(self, name: str, limit: int) -> list[dict[str, Any]]:
         points, _ = self._call("scroll", name, limit=limit, with_payload=True, with_vectors=False)

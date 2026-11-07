@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,7 @@ def test_pdf_tables_can_be_dropped(tmp_path: Path) -> None:
     assert not any(b.kind == "table" for b in document.blocks)
 
 
+@pytest.mark.skipif(importlib.util.find_spec("rapidocr_onnxruntime") is not None, reason="OCR extra is installed")
 def test_pdf_without_text_layer_warns_without_ocr_extra(tmp_path: Path) -> None:
     path = write_pdf(tmp_path / "scan.pdf", [PdfPage()])
     document = parse_document(path, ParsingConfig(ocr="auto"))
@@ -92,7 +94,12 @@ def test_plain_text_paragraphs(tmp_path: Path) -> None:
 
 def test_unknown_extension(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no parser"):
-        parse_document(tmp_path / "x.docx", ParsingConfig())
+        parse_document(tmp_path / "x.xyz", ParsingConfig())
+
+
+def test_office_files_need_the_layout_reader_in_fast_mode(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="layout reader"):
+        parse_document(tmp_path / "x.docx", ParsingConfig(engine="fast"))
 
 
 def test_corrupt_pdf_raises(tmp_path: Path) -> None:

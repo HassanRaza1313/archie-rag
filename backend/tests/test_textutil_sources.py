@@ -60,7 +60,9 @@ def test_discover_filters_types_and_patterns(tmp_path: Path) -> None:
     root = _tree(tmp_path)
     settings = _settings(tmp_path)
     all_refs = discover(SourceConfig(path=str(root)), settings, "kb")
-    assert [r.uri for r in all_refs] == ["a.pdf", "b.md", "c.txt", "sub/e.md", "sub/skip.md"]
+    assert [r.uri for r in all_refs] == ["a.pdf", "b.md", "c.txt", "d.docx", "sub/e.md", "sub/skip.md"]
+    text_only = discover(SourceConfig(path=str(root), file_types=[".md", ".txt"]), settings, "kb")
+    assert [r.uri for r in text_only] == ["b.md", "c.txt", "sub/e.md", "sub/skip.md"]
     filtered = discover(SourceConfig(path=str(root), include=["sub/*"], exclude=["*skip*"]), settings, "kb")
     assert [r.uri for r in filtered] == ["sub/e.md"]
     flat = discover(SourceConfig(path=str(root), recursive=False, file_types=[".md"]), settings, "kb")

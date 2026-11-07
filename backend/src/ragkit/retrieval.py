@@ -1,4 +1,8 @@
-"""Retrieval pipeline: hybrid search -> fusion -> rerank -> relevance floor -> dedup -> compression -> budget.
+"""Retrieval pipeline: hybrid search -> fusion -> rerank -> relevance floor -> dedup -> compression -> budget
+-> expansion.
+
+Expansion is small-to-big retrieval: small chunks are what gets searched and ranked, then each selected hit is
+widened with its neighbouring chunks or its whole section, while the token budget allows.
 
 Every step is a small pure function so it can be tested and traced on its own. ``retrieve`` reports the
 candidate count after each step (the funnel) and a confidence in [0, 1].
@@ -160,6 +164,49 @@ def fit_budget(candidates: list[Candidate], top_n: int, token_budget: int) -> li
     return selected
 
 
+def _join(previous: str, following: str) -> str:
+    """Join consecutive chunks, dropping the overlap the chunker repeated at the start of ``following``."""
+    prefix, overlap = "", 0
+    for sentence in split_sentences(following)[:-1]:
+        prefix = f"{prefix} {sentence}".strip()
+        if previous.endswith(prefix):
+            overlap = len(prefix)
+    return f"{previous} {following[overlap:].lstrip()}".strip()
+
+
+def expand(
+    selected: list[Candidate], collection: str, index: VectorIndex, mode: str, token_budget: int
+) -> list[Candidate]:
+    """Widen each selected chunk with its neighbours or section, best hit first, within the token budget."""
+    used = {(c.payload.get("document_uri"), c.payload.get("ordinal")) for c in selected}
+    spent = sum(estimate_tokens(c.text) for c in selected)
+    for candidate in selected:
+        uri, ordinal = candidate.payload.get("document_uri"), candidate.payload.get("ordinal")
+        if uri is None or ordinal is None:
+            continue
+        if mode == "section" and candidate.payload.get("section"):
+            rows = index.document_chunks(collection, uri, section=candidate.payload["section"], limit=40)
+        else:
+            rows = index.document_chunks(collection, uri, ordinals=(ordinal - 1, ordinal + 1))
+        rows = [r for r in rows if r.get("ordinal") == ordinal or (uri, r.get("ordinal")) not in used]
+        text = ""
+        for row in rows:
+            text = _join(text, candidate.text if row.get("ordinal") == ordinal else str(row.get("text", "")))
+        extra = estimate_tokens(text) - estimate_tokens(candidate.text)
+        if extra <= 0 or spent + extra > token_budget:
+            continue
+        spent += extra
+        used.update((uri, row.get("ordinal")) for row in rows)
+        candidate.text = text
+        candidate.payload = {
+            **candidate.payload,
+            "expanded": [row.get("ordinal") for row in rows],
+            "page_start": min(int(row.get("page_start") or 1) for row in rows),
+            "page_end": max(int(row.get("page_end") or 1) for row in rows),
+        }
+    return selected
+
+
 async def retrieve(
     query: str,
     query_vector: list[float] | None,
@@ -200,6 +247,9 @@ async def retrieve(
         for candidate in unique:
             candidate.text = compress(candidate, query)
     selected = fit_budget(unique, config.rerank.top_n, config.context.token_budget)
+    if config.context.expand != "off" and selected:
+        await asyncio.to_thread(expand, selected, collection, index, config.context.expand, config.context.token_budget)
+        funnel["expanded"] = sum(1 for c in selected if len(c.payload.get("expanded", ())) > 1)
     funnel["context"] = len(selected)
     funnel["context_tokens"] = sum(estimate_tokens(c.text) for c in selected)
     return RetrievalResult(selected, ranked, funnel, confidence_of(relevant))

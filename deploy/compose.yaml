@@ -11,6 +11,7 @@ x-api: &api
     target: api
     args:
       INSTALL_OCR: ${RAG_INSTALL_OCR:-false}
+      INSTALL_LAYOUT: ${RAG_INSTALL_LAYOUT:-false}
   # Only infrastructure values are passed in; paths inside the container come from the image.
   environment:
     RAG_OLLAMA_URL: ${RAG_OLLAMA_URL:-http://host.docker.internal:11434}
