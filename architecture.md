@@ -301,6 +301,12 @@ exporter can be added without touching call sites.
 | `POST/GET /api/kbs/{id}/builds`, `GET /api/jobs/{id}`, `POST …/cancel`, `GET …/events` (SSE) | Builds |
 | `GET/POST /api/kbs/{id}/uploads` | Upload source |
 | `POST /api/kbs/{id}/chat` (SSE: status, sources, token, verdict, done, error) | Chat |
+| `POST /api/kbs/{id}/share` `{enabled, reset}` | Turn the share link on or off, or replace it |
+| `GET /api/auth/me`, `POST /api/auth/owner`, `…/sign-in`, `…/sign-out`, `…/password`, `GET/POST /api/auth/invite/{token}` | Accounts: who is signed in, the first owner, sessions, invitations and password resets |
+| `GET/POST /api/users`, `PATCH/DELETE /api/users/{id}`, `POST /api/users/{id}/invite`, `GET /api/audit` | People and the change history (owners only) |
+| `GET /api/share/{token}`, `…/suggestions`, `POST …/chat`, `DELETE …/sessions/{sid}` | Shared chatbot: no admin key, rate-limited per visitor |
+| `GET /api/system/folders?path=` | Folder picker: one level inside the allowed data roots, with supported-file counts |
+| `GET /api/setup/models?preset=` | Whether a preset's models are installed; Archie's built-in search model as a fallback |
 | `DELETE /api/kbs/{id}/sessions/{sid}` | Forget a conversation |
 | `GET /api/traces`, `GET /api/traces/{id}`, `GET /api/kbs/{id}/stats` | Telemetry |
 | `GET /api/kbs/{id}/suggestions` | Starter questions drawn from the indexed sections |
@@ -325,9 +331,12 @@ Copy is written for non-technical users. Each chatbot has two places: **Ask**, a
 | Route | Screen |
 |---|---|
 | `/` | Welcome and Continue on first run; afterwards opens the chatbot used last |
-| `/new` | Setup assistant, one decision per screen: name, documents (folder or upload), answer style; Create builds and opens Ask |
+| `/new` | Setup assistant, one decision per screen: name, documents (folder picker or upload), answer style with a live model check; Create builds and opens Ask |
 | `/status` | SLOs in plain words, error budget, anything that needs attention |
-| `/kb/:id/ask` | Build progress until the first build finishes, then suggested questions, streaming answers, citation chips, source cards, Quick Look, "How Archie found this" trace |
+| `/kb/:id/ask` | Build progress until the first build finishes, then suggested questions, streaming answers, citation chips, source cards, Quick Look, "How Archie found this" trace; Share sheet (link and website embed) |
+| `/people` | Owners: people, their access (can ask, can edit, owner), invitation and password links, the change history; on an open install, turning sign-in on |
+| `/invite/:token` | Join with an invitation, or choose a new password from a reset link |
+| `/share/:token` | The shared chatbot alone, for anyone with the link; also the page inside the website widget (`/widget.js`) |
 | `/kb/:id/manage/documents` | How each file was read and split, files most likely misread first; edit or exclude passages |
 | `/kb/:id/manage/settings` | Schema-driven settings grouped by what a change costs, inline validation, presets, delete chatbot |
 | `/kb/:id/manage/builds[/:job]` | Live build steps, outcome, technical details, history |

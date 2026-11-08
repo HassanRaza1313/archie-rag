@@ -108,6 +108,20 @@ async def test_broaden_strategy_drops_filters(world_factory: Any) -> None:
     assert result["sources"][0]["file"] == "home-composting-guide.md"
 
 
+async def test_filtered_requests_bypass_the_cache(built: tuple[World, str, Agent]) -> None:
+    world, kb_id, agent = built
+    await ask(agent, kb_id, COMPOST_Q)
+    filtered = await ask(agent, kb_id, COMPOST_Q, filters={"file_name": "remote-team-handbook.md"})
+    assert filtered["final"]["outcome"] != "cache_hit"
+    assert "cache bypassed: filtered request" in trace_of(world, filtered)["data"]["decisions"]
+
+
+async def test_memory_is_per_chatbot(built: tuple[World, str, Agent]) -> None:
+    _, kb_id, agent = built
+    await ask(agent, kb_id, COMPOST_Q, session_id="s")
+    assert agent.memory.turns(f"{kb_id}:s", 5) and not agent.memory.turns("kb_other:s", 5)
+
+
 async def test_no_retries_when_disabled(world_factory: Any) -> None:
     world, kb_id, agent = await world_factory(agent={"max_reformulations": 0})
     result = await ask(agent, kb_id, "Who won the football world cup in 1998?")

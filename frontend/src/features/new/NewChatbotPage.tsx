@@ -1,9 +1,11 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { Check, FolderOpen, Upload } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, cn, ErrorNote, Input } from "../../components/ui";
 import { ApiError, api, type Config } from "../../lib/api";
+import { FolderPicker } from "./FolderPicker";
+import { ModelCheck, type ModelChoice } from "./ModelCheck";
 
 const PRESETS: { name: string; title: string; body: string }[] = [
   { name: "balanced", title: "Balanced", body: "Good answers at a comfortable speed. Best for most collections." },
@@ -59,18 +61,20 @@ function friendly(error: unknown): string {
 
 export function NewChatbotPage() {
   const navigate = useNavigate();
-  const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: api.capabilities, staleTime: 60_000 });
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [source, setSource] = useState<"folder" | "uploads">("folder");
-  const [folder, setFolder] = useState("data/sources/sample");
+  const [folder, setFolder] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [preset, setPreset] = useState("balanced");
+  const [models, setModels] = useState<ModelChoice>({});
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [problems, setProblems] = useState<string[]>([]);
 
-  const sourceConfig: Config = {
+  const chosen: Config = {
     source: source === "uploads" ? { type: "uploads" } : { type: "local_folder", path: folder },
+    ...(models.embedding && { embedding: models.embedding }),
+    ...(models.generation && { generation: models.generation }),
   };
 
   const go = useMutation({
@@ -78,23 +82,24 @@ export function NewChatbotPage() {
       setProblems([]);
       let id = createdId;
       if (!id) {
-        id = (await api.createKb(name.trim(), preset, sourceConfig)).id;
+        id = (await api.createKb(name.trim(), preset, chosen)).id;
         setCreatedId(id);
       } else {
         const current = (await api.getKb(id)).config;
-        await api.saveConfig(id, {
-          ...current,
-          ...sourceConfig,
-          source: { ...current.source, ...sourceConfig.source },
-        });
+        const merged = { ...current };
+        for (const [stage, values] of Object.entries(chosen)) merged[stage] = { ...current[stage], ...values };
+        await api.saveConfig(id, merged);
       }
       if (source === "uploads" && files.length) await api.upload(id, files);
       const config = (await api.getKb(id)).config;
       const check = await api.validate(id, config);
-      const blocking = check.errors.filter((e) => e.loc[0] === "source" || then === "build");
+      // A missing answer model doesn't stop a build: Ask explains it, and answers start once the model is there.
+      const blocking = check.errors.filter(
+        (e) => e.loc[0] === "source" || (then === "build" && e.loc[0] !== "generation"),
+      );
       if (blocking.length) {
         setProblems(blocking.map((e) => e.msg));
-        setStep(1);
+        setStep(blocking.some((e) => e.loc[0] === "source") ? 1 : 2);
         return null;
       }
       if (then === "review") return `/kb/${id}/manage/settings`;
@@ -104,7 +109,6 @@ export function NewChatbotPage() {
     onSuccess: (to) => to && navigate(to),
   });
 
-  const roots = capabilities.data?.data_roots ?? [];
   const valid = [name.trim().length > 0, source === "folder" ? folder.trim().length > 0 : files.length > 0, true];
   const last = step === STEPS.length - 1;
 
@@ -183,22 +187,7 @@ export function NewChatbotPage() {
               />
             </fieldset>
             {source === "folder" ? (
-              <div className="mt-5">
-                <label htmlFor="folder" className="px-1 text-sm font-medium text-slate">
-                  Folder
-                </label>
-                <Input
-                  id="folder"
-                  className="mt-1 font-mono text-sm"
-                  value={folder}
-                  onChange={(e) => setFolder(e.target.value)}
-                />
-                <p className="mt-1.5 px-1 text-xs text-slate">
-                  {roots.length
-                    ? `Archie may read folders inside ${roots.join(", ")}.`
-                    : "Archie may only read folders its administrator has allowed."}
-                </p>
-              </div>
+              <FolderPicker value={folder} onChange={setFolder} />
             ) : (
               <div className="mt-5">
                 <label className="press inline-flex h-8 cursor-default items-center gap-2 rounded-[var(--radius-control)] bg-panel px-3.5 text-sm font-medium shadow-[0_0_0_0.5px_var(--color-rule-strong),0_1px_1px_rgb(0_0_0/0.06)] hover:bg-plinth">
@@ -245,6 +234,7 @@ export function NewChatbotPage() {
                 />
               ))}
             </fieldset>
+            <ModelCheck preset={preset} choice={models} onChoice={setModels} />
           </div>
         )}
 

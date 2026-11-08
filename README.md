@@ -17,6 +17,8 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
   keywords for each passage (contextual retrieval); answers get the text around each hit (small-to-big).
 - **Inspect and fix ingestion.** A Documents page shows how every file was read and split, flags the ones likely
   misread, and lets you edit or exclude passages; edits are searchable at once and survive rebuilds.
+- **Share it.** One switch gives a chatbot a link anyone can ask, and a one-line snippet puts it on any
+  website as a chat button. Visitors can only ask questions, rate-limited; HTTPS comes with one profile.
 - **Builds as jobs.** Incremental, resumable, cancellable, with a live stage timeline and zero-downtime index swaps.
 - **Telemetry that explains.** Per request: candidate funnel, agent decisions, latency waterfall, top chunks with
   dense and keyword ranks. Per build: stage counts, failures and a corpus profile. Correlated logs, Prometheus
@@ -33,9 +35,9 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
 ./scripts/rag.sh up        # Docker → http://localhost:8080   (or: rag dev → http://localhost:5173)
 ```
 
-Then **Create your first chatbot** → name it → keep the sample folder → **Create and build** → **Ask your first
-question**. Requirements, every command,
-containers and troubleshooting: [setup.md](setup.md).
+Then **Continue** → name your chatbot → choose its documents (the sample folder is filled in) → pick an answer
+style → **Create**. Archie builds it and opens Ask. Requirements, every command, containers and troubleshooting:
+[setup.md](setup.md).
 
 ## Documentation
 

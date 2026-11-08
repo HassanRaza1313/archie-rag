@@ -10,8 +10,11 @@ import hmac
 import json
 import logging
 import re
+import secrets
+import shutil
 import statistics
 import time
+from collections import OrderedDict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -25,6 +28,19 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
 from ragkit import __version__
+from ragkit.accounts import (
+    INVITE_DAYS,
+    ROLES,
+    SESSION_DAYS,
+    Identity,
+    check_password,
+    hash_password,
+    new_token,
+    password_problem,
+    rank,
+    required_role,
+    token_hash,
+)
 from ragkit.agent import Agent, ChatRequest, suggest_questions
 from ragkit.cache import AnswerCache
 from ragkit.chunking import embed_text_for
@@ -54,7 +70,7 @@ from ragkit.observability import (
 from ragkit.parsing import LAYOUT_ONLY
 from ragkit.providers import ProviderError, ProviderRegistry
 from ragkit.settings import Settings
-from ragkit.sources import SourceError, discover, resolve_root
+from ragkit.sources import SourceError, discover, list_folders, resolve_root
 from ragkit.storage import Database, JobConflictError
 from ragkit.telemetry import request_id_var
 from ragkit.textutil import bm25_document_vector, estimate_tokens
@@ -63,6 +79,37 @@ logger = logging.getLogger(__name__)
 access_logger = logging.getLogger("ragkit.access")
 
 NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,79}$"
+SESSION_COOKIE = "archie_session"
+# Checked when an email is unknown, so a wrong email takes as long as a wrong password.
+_DUMMY_HASH = hash_password("not-a-real-password")
+# Asking questions is not an administrative change, so it stays out of the audit log.
+_NOT_AUDITED = re.compile(r"POST /api/kbs/[^/]+/(chat|eval|configs/validate)|DELETE /api/kbs/[^/]+/sessions/[^/]+")
+LOCAL_EMBEDDING = ("fastembed", "BAAI/bge-small-en-v1.5")  # runs inside Archie: no model server needed
+
+
+class RateLimiter:
+    """At most ``per_minute`` hits per key in any sliding minute.
+
+    shortcut: per API process; move to Redis when running several API replicas.
+    """
+
+    def __init__(self, per_minute: int, max_keys: int = 10_000) -> None:
+        self.per_minute = per_minute
+        self.max_keys = max_keys
+        self._hits: OrderedDict[str, deque[float]] = OrderedDict()
+
+    def allow(self, key: str, now: float | None = None) -> bool:
+        now = time.monotonic() if now is None else now
+        hits = self._hits.setdefault(key, deque())
+        self._hits.move_to_end(key)
+        while hits and now - hits[0] >= 60:
+            hits.popleft()
+        if len(hits) >= self.per_minute:
+            return False
+        hits.append(now)
+        while len(self._hits) > self.max_keys:
+            self._hits.popitem(last=False)
+        return True
 
 
 @dataclass
@@ -75,6 +122,8 @@ class AppContext:
     builder: Builder
     memory: SessionMemory
     metrics: Metrics
+    limiter: RateLimiter
+    sign_in_limiter: RateLimiter
     worker_task: asyncio.Task[None] | None = None
     worker_stop: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -97,6 +146,40 @@ class ChatBody(BaseModel):
     session_id: str | None = Field(default=None, max_length=100)
     filters: dict[str, str | int | list[str]] = Field(default_factory=dict, max_length=10)
     profile: dict[str, Annotated[str, Field(max_length=300)]] = Field(default_factory=dict, max_length=5)
+
+
+class SignInBody(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class OwnerBody(SignInBody):
+    name: str = Field(default="", max_length=80)
+
+
+class JoinBody(BaseModel):
+    name: str = Field(default="", max_length=80)
+    password: str = Field(max_length=200)
+
+
+class PasswordBody(BaseModel):
+    current: str = Field(max_length=200)
+    new: str = Field(max_length=200)
+
+
+class InviteBody(BaseModel):
+    email: str = Field(min_length=3, max_length=200, pattern=r"^[^@\s]+@[^@\s]+$")
+    role: Literal["viewer", "editor", "owner"] = "viewer"
+
+
+class UserChange(BaseModel):
+    role: Literal["viewer", "editor", "owner"] | None = None
+    disabled: bool | None = None
+
+
+class ShareBody(BaseModel):
+    enabled: bool
+    reset: bool = False
 
 
 class ChunkEditBody(BaseModel):
@@ -136,6 +219,8 @@ def create_app(
             providers=registry,
             memory=memory,
             metrics=metrics,
+            limiter=RateLimiter(settings.share_rate_per_minute),
+            sign_in_limiter=RateLimiter(10),
             agent=Agent(db, index, registry, AnswerCache(db), memory, observer=metrics.observe_trace),
             builder=Builder(db, index, registry, settings),
         )
@@ -155,19 +240,47 @@ def create_app(
     app = FastAPI(title="ragkit", version=__version__, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["*"], allow_headers=["*"])
 
+    def identify(context: AppContext, request: Request) -> Identity | None:
+        supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if settings.api_key and supplied and hmac.compare_digest(supplied.encode(), settings.api_key.encode()):
+            return Identity("API key", "owner")
+        cookie = request.cookies.get(SESSION_COOKIE)
+        if cookie and (user := context.db.session_user(token_hash(cookie))):
+            return Identity(user["email"], user["role"], user["id"])
+        if not settings.api_key and context.db.user_count() == 0:
+            return Identity("local", "owner")  # a fresh local install: open until the first account exists
+        return None
+
     @app.middleware("http")
-    async def require_api_key(request: Request, call_next: Any) -> Any:
-        path = request.url.path
-        if (
-            settings.api_key
-            and (path.startswith("/api/") or path == "/metrics")
+    async def authenticate(request: Request, call_next: Any) -> Any:
+        path, method = request.url.path, request.method
+        context: AppContext | None = getattr(request.app.state, "context", None)
+        guarded = (
+            (path.startswith("/api/") or path == "/metrics")
+            and method != "OPTIONS"
             and path != "/api/system/health"
-            and request.method != "OPTIONS"
+            and not path.startswith(("/api/share/", "/api/auth/"))  # a share token or sign-in is the credential
+        )
+        identity = identify(context, request) if context else None
+        request.state.identity = identity
+        if guarded:
+            if identity is None:
+                return JSONResponse({"detail": "sign in first"}, status_code=401)
+            if rank(identity.role) < rank(required_role(method, path)):
+                return JSONResponse({"detail": f"a {identity.role} can't do this"}, status_code=403)
+        response = await call_next(request)
+        if (
+            guarded
+            and context
+            and identity
+            and method not in ("GET", "HEAD")
+            and not _NOT_AUDITED.fullmatch(f"{method} {path}")
         ):
-            supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-            if not hmac.compare_digest(supplied.encode(), settings.api_key.encode()):
-                return JSONResponse({"detail": "missing or invalid API key"}, status_code=401)
-        return await call_next(request)
+            route = getattr(request.scope.get("route"), "path", path)
+            params = request.scope.get("path_params", {})
+            target = params.get("kb_id") or params.get("user_id") or params.get("job_id")
+            context.db.audit(identity.name, f"{method} {route}", target, response.status_code)
+        return response
 
     # Outermost middleware (added last): correlation id, access log and HTTP metrics for every request, 401s included.
     @app.middleware("http")
@@ -228,6 +341,7 @@ def create_app(
             "chunks": kb["chunk_count"],
             "active_job": active,
             "last_job": jobs[0] if jobs else None,
+            "share_token": kb.get("share_token"),
         }
 
     def parse_config(raw: dict[str, Any]) -> KnowledgeBaseConfig:
@@ -253,9 +367,196 @@ def create_app(
         return {
             "qdrant": context.index.capabilities(),
             "rerank_provider": context.settings.rerank_provider,
-            "auth": bool(context.settings.api_key),
+            "auth": bool(context.settings.api_key) or context.db.user_count() > 0,
+            "roles": list(ROLES),
             "data_roots": [str(p) for p in context.settings.data_roots],
         }
+
+    # Accounts. With no accounts and no API key, a local install stays open; the first account turns sign-in on.
+
+    def sign_in(context: AppContext, request: Request, response: Response, user_id: str) -> None:
+        token, hashed = new_token()
+        context.db.create_session(hashed, user_id, time.time() + SESSION_DAYS * 86400)
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            max_age=SESSION_DAYS * 86400,
+            httponly=True,
+            samesite="strict",  # never sent with requests from other sites, so no cross-site forgery
+            secure=request.url.scheme == "https",
+        )
+
+    def me(context: AppContext, request: Request) -> dict[str, Any]:
+        identity: Identity | None = request.state.identity
+        user = context.db.get_user(identity.user_id) if identity and identity.user_id else None
+        return {
+            "accounts": context.db.user_count() > 0,
+            "role": identity.role if identity else None,
+            "via": None if identity is None else "account" if user else "key" if identity.name == "API key" else "open",
+            "user": {key: user[key] for key in ("id", "email", "name")} if user else None,
+        }
+
+    @app.get("/api/auth/me")
+    async def auth_me(request: Request, context: Ctx) -> dict[str, Any]:
+        return me(context, request)
+
+    @app.post("/api/auth/owner", status_code=201)
+    async def create_owner(body: OwnerBody, request: Request, response: Response, context: Ctx) -> dict[str, Any]:
+        """The first account. Needs whatever already guards this install: the API key when one is set."""
+        if context.db.user_count():
+            raise HTTPException(409, "Archie already has an owner; sign in instead")
+        identity: Identity | None = request.state.identity
+        if identity is None or identity.role != "owner":
+            raise HTTPException(401, "enter the admin key first")
+        if problem := password_problem(body.password):
+            raise HTTPException(422, problem)
+        email = body.email.strip().lower()
+        user_id = context.db.create_user(email, "owner", body.name.strip(), hash_password(body.password))
+        sign_in(context, request, response, user_id)
+        context.db.audit(email, "created the owner account", user_id, 201)
+        request.state.identity = Identity(email, "owner", user_id)
+        return me(context, request)
+
+    @app.post("/api/auth/sign-in")
+    async def sign_in_route(body: SignInBody, request: Request, response: Response, context: Ctx) -> dict[str, Any]:
+        visitor = request.client.host if request.client else "unknown"
+        if not context.sign_in_limiter.allow(visitor):
+            raise HTTPException(429, "Too many attempts. Try again in a minute.", headers={"Retry-After": "60"})
+        email = body.email.strip().lower()
+        user = context.db.user_login(email)
+        if not check_password(body.password, user["password_hash"] if user else _DUMMY_HASH) or user is None:
+            context.db.audit(email, "sign-in failed", None, 401)
+            raise HTTPException(401, "Wrong email or password.")
+        sign_in(context, request, response, user["id"])
+        context.db.audit(email, "signed in", user["id"], 200)
+        request.state.identity = Identity(email, context.db.get_user(user["id"])["role"], user["id"])  # type: ignore[index]
+        return me(context, request)
+
+    @app.post("/api/auth/sign-out", status_code=204)
+    async def sign_out(request: Request, response: Response, context: Ctx) -> None:
+        if cookie := request.cookies.get(SESSION_COOKIE):
+            context.db.end_sessions(token_hash=token_hash(cookie))
+        response.delete_cookie(SESSION_COOKIE)
+
+    @app.get("/api/auth/invite/{token}")
+    async def invite(token: str, context: Ctx) -> dict[str, Any]:
+        user = context.db.user_by_invite(token_hash(token))
+        if user is None:
+            raise HTTPException(404, "this invitation has expired or was already used")
+        return {"email": user["email"], "joined": bool(user["joined"])}
+
+    @app.post("/api/auth/invite/{token}")
+    async def accept_invite(
+        token: str, body: JoinBody, request: Request, response: Response, context: Ctx
+    ) -> dict[str, Any]:
+        user = context.db.user_by_invite(token_hash(token))
+        if user is None:
+            raise HTTPException(404, "this invitation has expired or was already used")
+        if problem := password_problem(body.password):
+            raise HTTPException(422, problem)
+        name = body.name.strip() or user["name"]
+        context.db.update_user(
+            user["id"], name=name, password_hash=hash_password(body.password), invite_hash=None, invite_expires=None
+        )
+        context.db.end_sessions(user_id=user["id"])  # a reset link signs out every other device
+        sign_in(context, request, response, user["id"])
+        context.db.audit(user["email"], "joined" if not user["joined"] else "reset their password", user["id"], 200)
+        request.state.identity = Identity(user["email"], user["role"], user["id"])
+        return me(context, request)
+
+    @app.post("/api/auth/password", status_code=204)
+    async def change_password(body: PasswordBody, request: Request, response: Response, context: Ctx) -> None:
+        identity: Identity | None = request.state.identity
+        if identity is None or identity.user_id is None:
+            raise HTTPException(401, "sign in first")
+        user = context.db.user_login(identity.name)
+        if user is None or not check_password(body.current, user["password_hash"]):
+            raise HTTPException(403, "The current password is wrong.")
+        if problem := password_problem(body.new):
+            raise HTTPException(422, problem)
+        context.db.update_user(identity.user_id, password_hash=hash_password(body.new))
+        context.db.end_sessions(user_id=identity.user_id)
+        sign_in(context, request, response, identity.user_id)
+        context.db.audit(identity.name, "changed their password", identity.user_id, 204)
+
+    # People (owners only, enforced by the middleware)
+
+    def user_or_404(context: AppContext, user_id: str) -> dict[str, Any]:
+        user = context.db.get_user(user_id)
+        if user is None:
+            raise HTTPException(404, "person not found")
+        return user
+
+    def keep_an_owner(context: AppContext, user: dict[str, Any]) -> None:
+        if user["role"] == "owner" and not user["disabled"] and context.db.owner_count() <= 1:
+            raise HTTPException(409, "Archie needs at least one owner; make someone else an owner first")
+
+    def new_invite(context: AppContext, user_id: str) -> str:
+        token, hashed = new_token()
+        context.db.update_user(user_id, invite_hash=hashed, invite_expires=time.time() + INVITE_DAYS * 86400)
+        return token
+
+    @app.get("/api/users")
+    async def users(context: Ctx) -> list[dict[str, Any]]:
+        return context.db.list_users()
+
+    @app.post("/api/users", status_code=201)
+    async def add_user(body: InviteBody, context: Ctx) -> dict[str, Any]:
+        email = body.email.strip().lower()
+        if context.db.user_by_email(email):
+            raise HTTPException(409, "this person already has an account")
+        user_id = context.db.create_user(email, body.role)
+        return {"user": context.db.get_user(user_id), "invite_token": new_invite(context, user_id)}
+
+    @app.post("/api/users/{user_id}/invite")
+    async def reinvite(user_id: str, context: Ctx) -> dict[str, Any]:
+        user_or_404(context, user_id)
+        return {"invite_token": new_invite(context, user_id)}
+
+    @app.patch("/api/users/{user_id}")
+    async def change_user(user_id: str, body: UserChange, context: Ctx) -> dict[str, Any]:
+        user = user_or_404(context, user_id)
+        if (body.role and body.role != "owner") or body.disabled:
+            keep_an_owner(context, user)
+        changes = {key: value for key, value in body.model_dump().items() if value is not None}
+        if changes:
+            context.db.update_user(user_id, **changes)
+        if body.disabled:
+            context.db.end_sessions(user_id=user_id)
+        return user_or_404(context, user_id)
+
+    @app.delete("/api/users/{user_id}", status_code=204)
+    async def remove_user(user_id: str, context: Ctx) -> None:
+        keep_an_owner(context, user_or_404(context, user_id))
+        context.db.delete_user(user_id)
+
+    @app.get("/api/audit")
+    async def audit(context: Ctx, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        return context.db.audit_log(max(1, min(limit, 500)), max(0, offset))
+
+    @app.get("/api/system/folders")
+    async def folders(context: Ctx, path: str | None = None) -> dict[str, Any]:
+        return await asyncio.to_thread(list_folders, context.settings, path)
+
+    @app.get("/api/setup/models")
+    async def setup_models(context: Ctx, preset: str = "balanced") -> dict[str, Any]:
+        """Whether a new chatbot's models are ready, and a built-in search model when the usual one is missing."""
+        if preset not in PRESETS:
+            raise HTTPException(404, "unknown preset")
+        config = preset_config(preset)
+        stages: dict[str, Any] = {}
+        for name in ("embedding", "generation"):
+            stage = getattr(config, name)
+            ok = await _model_available(context, stage.provider, stage.model)
+            stages[name] = {"provider": stage.provider, "model": stage.model, "ok": ok}
+        fallback = None
+        if not stages["embedding"]["ok"] and await _model_available(context, *LOCAL_EMBEDDING):
+            fallback = {"provider": LOCAL_EMBEDDING[0], "model": LOCAL_EMBEDDING[1]}
+        try:
+            installed = await context.providers.get("ollama").list_models()
+        except Exception:
+            installed = []
+        return stages | {"fallback_embedding": fallback, "installed": installed}
 
     @app.get("/metrics", include_in_schema=False)
     async def metrics(request: Request, context: Ctx) -> Response:
@@ -330,6 +631,16 @@ def create_app(
         for name in await asyncio.to_thread(context.index.drop_prefix, f"{kb_id}__"):
             context.db.forget_documents(name)
         context.db.delete_kb(kb_id)
+        await asyncio.to_thread(shutil.rmtree, context.settings.uploads_dir / kb_id, True)
+
+    @app.post("/api/kbs/{kb_id}/share")
+    async def share(kb_id: str, body: ShareBody, context: Ctx) -> dict[str, str | None]:
+        kb = kb_or_404(context, kb_id)
+        token = kb["share_token"] if body.enabled else None
+        if body.enabled and (body.reset or not token):
+            token = secrets.token_urlsafe(18)
+        context.db.set_share_token(kb_id, token)
+        return {"share_token": token}
 
     @app.get("/api/kbs/{kb_id}/configs")
     async def list_configs(kb_id: str, context: Ctx) -> list[dict[str, Any]]:
@@ -438,13 +749,15 @@ def create_app(
             saved.append({"name": name, "bytes": size})
         return {"saved": saved}
 
-    @app.get("/api/kbs/{kb_id}/suggestions")
-    async def suggestions(kb_id: str, context: Ctx) -> list[str]:
-        kb = kb_or_404(context, kb_id)
+    async def suggest(context: AppContext, kb: dict[str, Any]) -> list[str]:
         if not kb["active_collection"]:
             return []
         payloads = await asyncio.to_thread(context.index.sample_payloads, kb["active_collection"], 64)
         return suggest_questions(payloads)
+
+    @app.get("/api/kbs/{kb_id}/suggestions")
+    async def suggestions(kb_id: str, context: Ctx) -> list[str]:
+        return await suggest(context, kb_or_404(context, kb_id))
 
     # Documents: how each file was read and chunked, with hand corrections
 
@@ -550,9 +863,7 @@ def create_app(
 
     # Chat
 
-    @app.post("/api/kbs/{kb_id}/chat")
-    async def chat(kb_id: str, body: ChatBody, context: Ctx) -> StreamingResponse:
-        kb_or_404(context, kb_id)
+    def answer(context: AppContext, kb_id: str, body: ChatBody) -> StreamingResponse:
         _, config = context.db.get_config(kb_id)
         allowed = {*BUILTIN_FILTER_FIELDS, *config.retrieval.filter_fields}
         if unknown := set(body.filters) - allowed:
@@ -565,9 +876,42 @@ def create_app(
 
         return _sse_response(stream())
 
+    @app.post("/api/kbs/{kb_id}/chat")
+    async def chat(kb_id: str, body: ChatBody, context: Ctx) -> StreamingResponse:
+        return answer(context, kb_or_404(context, kb_id)["id"], body)
+
     @app.delete("/api/kbs/{kb_id}/sessions/{session_id}", status_code=204)
     async def clear_session(kb_id: str, session_id: str, context: Ctx) -> None:
-        context.memory.clear(session_id)
+        context.memory.clear(f"{kb_id}:{session_id}")
+
+    # Shared chatbots: anyone with the link may ask questions, and nothing else
+
+    def shared(context: AppContext, token: str) -> dict[str, Any]:
+        kb = context.db.get_kb_by_share(token)
+        if kb is None:
+            raise HTTPException(404, "this chatbot is not shared, or its link was reset")
+        return kb
+
+    @app.get("/api/share/{token}")
+    async def shared_info(token: str, context: Ctx) -> dict[str, Any]:
+        kb = shared(context, token)
+        return {"name": kb["name"], "ready": bool(kb["active_collection"]), "documents": kb["document_count"]}
+
+    @app.get("/api/share/{token}/suggestions")
+    async def shared_suggestions(token: str, context: Ctx) -> list[str]:
+        return await suggest(context, shared(context, token))
+
+    @app.post("/api/share/{token}/chat")
+    async def shared_chat(token: str, body: ChatBody, request: Request, context: Ctx) -> StreamingResponse:
+        kb = shared(context, token)
+        visitor = request.client.host if request.client else "unknown"
+        if not context.limiter.allow(f"{token}:{visitor}"):
+            raise HTTPException(429, "Too many questions. Try again in a minute.", headers={"Retry-After": "60"})
+        return answer(context, kb["id"], body)
+
+    @app.delete("/api/share/{token}/sessions/{session_id}", status_code=204)
+    async def shared_clear_session(token: str, session_id: str, context: Ctx) -> None:
+        context.memory.clear(f"{shared(context, token)['id']}:{session_id}")
 
     # Telemetry and evaluation
 
@@ -651,8 +995,7 @@ async def _validate(context: AppContext, kb: dict[str, Any], config: KnowledgeBa
     for stage_name in stages:
         stage = getattr(config, stage_name)
         try:
-            available = await context.providers.get(stage.provider).list_models()
-            found = any(m == stage.model or m.startswith(stage.model + ":") for m in available)
+            found = await _model_available(context, stage.provider, stage.model, quiet=False)
             checks[stage_name] = {"ok": found, "model": stage.model}
             if not found:
                 errors.append(
@@ -685,6 +1028,17 @@ async def _validate(context: AppContext, kb: dict[str, Any], config: KnowledgeBa
         "checks": checks,
         "requires_rebuild": requires_rebuild,
     }
+
+
+async def _model_available(context: AppContext, provider: str, model: str, quiet: bool = True) -> bool:
+    """Whether ``provider`` serves ``model`` (Ollama tags count: 'qwen3.5' matches 'qwen3.5:9b')."""
+    try:
+        available = await context.providers.get(provider).list_models()
+    except Exception:
+        if quiet:
+            return False
+        raise
+    return any(m == model or m.startswith(model + ":") for m in available)
 
 
 def summarize_traces(rows: list[dict[str, Any]]) -> dict[str, Any]:

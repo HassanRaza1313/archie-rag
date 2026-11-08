@@ -248,7 +248,7 @@ class Agent:
         self, kb: dict[str, Any], config: KnowledgeBaseConfig, request: ChatRequest, trace: Trace
     ) -> AsyncIterator[Event]:
         llm = self.providers.get(config.generation.provider)
-        session_id = request.session_id
+        session_id = f"{kb['id']}:{request.session_id}" if request.session_id else None  # one chatbot's memory only
         history = self.memory.turns(session_id, config.cache.memory_turns) if config.cache.memory and session_id else []
         question = request.query.strip()
 
@@ -288,9 +288,10 @@ class Agent:
 
         personalised = any(request.profile.values())
         scope = scope_key(kb["id"], kb["built_index_hash"] or "", config.query_fingerprint())
-        cacheable = config.cache.enabled and not condensed and not personalised
+        cacheable = config.cache.enabled and not condensed and not personalised and not request.filters
         if config.cache.enabled and not cacheable:
-            trace.decide("cache bypassed: " + ("follow-up" if condensed else "personalised request"))
+            reason = "follow-up" if condensed else "personalised request" if personalised else "filtered request"
+            trace.decide(f"cache bypassed: {reason}")
         if cacheable:
             with trace.span("cache") as attributes:
                 hit = self.cache.lookup(scope, question, vector, config.cache)

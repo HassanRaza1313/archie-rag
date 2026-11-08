@@ -174,6 +174,8 @@ def test_uploads_source(client: TestClient, settings: Settings) -> None:
     assert client.post(f"/api/kbs/{kb['id']}/uploads", files=traversal).status_code == 201
     assert not (settings.state_dir / "escape.md").exists()
     assert build(client, kb["id"])["status"] == "completed"
+    assert client.delete(f"/api/kbs/{kb['id']}").status_code == 204
+    assert not (settings.uploads_dir / kb["id"]).exists()  # deleting a chatbot deletes its files
 
 
 def test_upload_size_limit(settings: Settings, registry: FakeRegistry) -> None:

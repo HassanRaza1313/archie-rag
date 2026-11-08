@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, FileText, RotateCcw, ScanSearch, Search, Square, UserRound } from "lucide-react";
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { ArrowUp, FileText, RotateCcw, ScanSearch, Search, Share, Square, UserRound } from "lucide-react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { TracePanel } from "../../components/TracePanel";
 import {
@@ -9,6 +9,7 @@ import {
   buttonClass,
   cn,
   Dialog,
+  EmptyState,
   ErrorNote,
   Group,
   Input,
@@ -16,10 +17,12 @@ import {
   StatusBadge,
   TextArea,
 } from "../../components/ui";
-import { type AnswerSummary, api, type ChatEvent, type Source, streamChat } from "../../lib/api";
+import { type AnswerSummary, api, type ChatEvent, chatBase, type Source, streamChat } from "../../lib/api";
 import { formatMs, pages } from "../../lib/format";
+import { can, useMe } from "../account/auth";
 import { BuildProgress, useLiveJob } from "../build/BuildPage";
 import { STAGE_LABELS, splitCitations } from "./citations";
+import { ShareSheet } from "./ShareSheet";
 
 export interface Message {
   id: string;
@@ -240,7 +243,7 @@ function Sources({ message, onOpen }: { message: Message; onOpen: (source: Sourc
   );
 }
 
-function HowAnswered({ message, onTrace }: { message: Message; onTrace: () => void }) {
+function HowAnswered({ message, onTrace }: { message: Message; onTrace?: () => void }) {
   const summary = message.summary;
   const verdict = verdictText(message.verify);
   return (
@@ -260,7 +263,7 @@ function HowAnswered({ message, onTrace }: { message: Message; onTrace: () => vo
           · {formatMs(summary.seconds * 1000)}
         </span>
       )}
-      {message.traceId && (
+      {message.traceId && onTrace && (
         <button
           type="button"
           onClick={onTrace}
@@ -431,20 +434,32 @@ function NotReady({ kbId, name, jobId }: { kbId: string; name: string; jobId: st
   );
 }
 
-export function ChatPage() {
-  const { kbId = "" } = useParams();
-  const kb = useQuery({
-    queryKey: ["kb", kbId],
-    queryFn: () => api.getKb(kbId),
-    refetchInterval: (query) => (query.state.data?.active_job ? 3_000 : false),
-  });
-  const built = Boolean(kb.data?.built_version);
+/** One conversation with a chatbot. Ask (for the owner) and shared links (for anyone) both use it. */
+export function ChatView({
+  base,
+  storageKey,
+  name,
+  documents,
+  built,
+  actions,
+  notReady,
+  canTrace = false,
+}: {
+  base: string;
+  storageKey: string;
+  name: string;
+  documents: number;
+  built: boolean;
+  actions?: ReactNode;
+  notReady?: ReactNode;
+  canTrace?: boolean;
+}) {
   const suggestions = useQuery({
-    queryKey: ["suggestions", kbId],
-    queryFn: () => api.suggestions(kbId),
+    queryKey: ["suggestions", base],
+    queryFn: () => api.suggestions(base),
     enabled: built,
   });
-  const [conversation, setConversation] = useState<Conversation>(() => loadConversation(kbId));
+  const [conversation, setConversation] = useState<Conversation>(() => loadConversation(storageKey));
   const [input, setInput] = useState("");
   const [profile, setProfile] = useState<Profile>(() =>
     readJson(localStorage, "archie.profile", { name: "", preferences: "" }),
@@ -460,8 +475,8 @@ export function ChatPage() {
   const streaming = messages.some((message) => message.streaming);
 
   useEffect(() => {
-    writeJson(sessionStorage, `archie.chat.${kbId}`, conversation);
-  }, [conversation, kbId]);
+    writeJson(sessionStorage, `archie.chat.${storageKey}`, conversation);
+  }, [conversation, storageKey]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: follow the newest token as it streams
   useEffect(() => {
     // Block body: newer browsers return a Promise here, which React would call as a cleanup.
@@ -532,7 +547,7 @@ export function ChatPage() {
         session_id: conversation.sessionId,
         profile: Object.fromEntries(Object.entries(profile).filter(([, value]) => value.trim())),
       };
-      for await (const event of await streamChat(kbId, body, controller.signal)) apply(event);
+      for await (const event of await streamChat(base, body, controller.signal)) apply(event);
       setAnnouncement(`Archie answered: ${finalText.replace(/\[S\d+[^\]]*\]/g, "")}`);
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -557,20 +572,11 @@ export function ChatPage() {
 
   async function newConversation() {
     abort.current?.abort();
-    await api.clearSession(kbId, conversation.sessionId).catch(() => undefined);
+    await api.clearSession(base, conversation.sessionId).catch(() => undefined);
     setConversation({ sessionId: crypto.randomUUID(), messages: [] });
   }
 
   const open = (source: Source | undefined, from: Element) => source && setPreview({ source, from: centreOf(from) });
-
-  if (kb.isLoading) {
-    return (
-      <div className="px-8 py-10">
-        <Skeleton />
-      </div>
-    );
-  }
-  const name = kb.data?.name ?? "Archie";
 
   return (
     <div className="flex h-full flex-col">
@@ -579,23 +585,23 @@ export function ChatPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="font-display text-2xl font-bold tracking-[-0.015em]">Ask {name}</h1>
             <div className="flex items-center gap-1">
-              {kb.data?.status === "stale" && <StatusBadge status="stale" />}
               <Button size="sm" variant="ghost" onClick={() => setProfileOpen(true)}>
                 <UserRound className="size-3.5" aria-hidden /> {profile.name || "About You"}
               </Button>
               <Button size="sm" variant="ghost" onClick={newConversation} disabled={!messages.length}>
                 <RotateCcw className="size-3.5" aria-hidden /> New Conversation
               </Button>
+              {actions}
             </div>
           </div>
 
-          {!built && kb.data && <NotReady kbId={kbId} name={name} jobId={kb.data.active_job?.id ?? null} />}
+          {!built && notReady}
 
           {built && messages.length === 0 && (
             <div className="settle pt-10">
               <p className="text-lg text-slate">
-                Archie answers from {kb.data?.documents} document{kb.data?.documents === 1 ? "" : "s"} and shows where
-                every answer came from.
+                Archie answers from {documents} document{documents === 1 ? "" : "s"} and shows where every answer came
+                from.
               </p>
               {(suggestions.data?.length ?? 0) > 0 && (
                 <Group title="Try asking" className="mt-7">
@@ -649,7 +655,10 @@ export function ChatPage() {
                   {!message.streaming && (
                     <>
                       <Sources message={message} onOpen={(source, from) => open(source, from)} />
-                      <HowAnswered message={message} onTrace={() => message.traceId && setTraceId(message.traceId)} />
+                      <HowAnswered
+                        message={message}
+                        onTrace={canTrace ? () => setTraceId(message.traceId ?? null) : undefined}
+                      />
                     </>
                   )}
                 </li>
@@ -721,5 +730,56 @@ export function ChatPage() {
         {traceId && <TracePanel traceId={traceId} />}
       </Dialog>
     </div>
+  );
+}
+
+export function ChatPage() {
+  const { kbId = "" } = useParams();
+  const [sharing, setSharing] = useState(false);
+  const me = useMe();
+  const editor = can(me.data, "editor");
+  const kb = useQuery({
+    queryKey: ["kb", kbId],
+    queryFn: () => api.getKb(kbId),
+    refetchInterval: (query) => (query.state.data?.active_job ? 3_000 : false),
+  });
+  if (kb.isLoading || !kb.data) {
+    return (
+      <div className="px-8 py-10">
+        <Skeleton />
+      </div>
+    );
+  }
+  const data = kb.data;
+  return (
+    <>
+      <ChatView
+        key={kbId}
+        base={chatBase(kbId)}
+        storageKey={kbId}
+        name={data.name}
+        documents={data.documents}
+        built={Boolean(data.built_version)}
+        canTrace
+        notReady={
+          editor ? (
+            <NotReady kbId={kbId} name={data.name} jobId={data.active_job?.id ?? null} />
+          ) : (
+            <EmptyState title={`${data.name} isn't ready yet`}>Ask an editor to build it.</EmptyState>
+          )
+        }
+        actions={
+          <>
+            {data.status === "stale" && <StatusBadge status="stale" />}
+            {editor && (
+              <Button size="sm" variant="ghost" onClick={() => setSharing(true)}>
+                <Share className="size-3.5" aria-hidden /> {data.share_token ? "Shared" : "Share"}
+              </Button>
+            )}
+          </>
+        }
+      />
+      {sharing && <ShareSheet kb={data} onClose={() => setSharing(false)} />}
+    </>
   );
 }

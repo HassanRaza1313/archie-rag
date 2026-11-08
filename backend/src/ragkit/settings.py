@@ -34,6 +34,10 @@ class Settings(BaseModel):
     log_level: str = "INFO"
     ui_dist_dir: Path | None = None
     max_upload_mb: int = 100
+    # Questions per minute from one visitor of a shared chatbot (by client address).
+    share_rate_per_minute: int = Field(20, ge=1)
+    # Proxies whose X-Forwarded-For is believed, so rate limits see the visitor, not the proxy.
+    trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1"])
     request_timeout_s: float = 300.0
     # Each file parses in a worker process with these limits; a file that exceeds them fails on its own.
     parse_timeout_s: float = Field(600.0, gt=0)

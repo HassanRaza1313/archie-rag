@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { unseenBuild } from "../components/Layout";
+import { can } from "../features/account/auth";
+import { describeAction } from "../features/account/PeoplePage";
 import { centreOf, loadConversation, originWithin, passageParts } from "../features/chat/ChatPage";
 import { splitCitations } from "../features/chat/citations";
+import { shareLinks } from "../features/chat/ShareSheet";
 import { qualityVerdict, TEMPLATES } from "../features/documents/DocumentsPage";
 import { parseGolden } from "../features/eval/EvalPage";
 import { openingChatbot } from "../features/kbs/HomePage";
+import { fileCount } from "../features/new/FolderPicker";
 import { rangeProblem } from "../features/setup/SchemaField";
 import { type JsonSchema, type KbStatus, type KnowledgeBase, parseSseBlock, readSse } from "./api";
 import { formatMs, formatPercent, pages, relativeTime } from "./format";
@@ -330,5 +334,40 @@ describe("documents", () => {
     expect(qualityVerdict(0.2).tone).toBe("bad");
     expect(qualityVerdict(undefined).text).toBe("Not scored");
     expect(TEMPLATES.rows).toBe("Groups of table rows");
+  });
+});
+
+describe("sharing and setup", () => {
+  it("builds the share link and embed snippet on this server", () => {
+    expect(shareLinks("abc", "https://archie.example.com")).toEqual({
+      link: "https://archie.example.com/share/abc",
+      embed: '<script src="https://archie.example.com/widget.js" data-chatbot="abc" async></script>',
+    });
+  });
+
+  it("counts files the way a folder list reads", () => {
+    expect([0, 1, 12, 1000].map(fileCount)).toEqual(["No documents", "1 file", "12 files", "1,000+ files"]);
+  });
+});
+
+describe("accounts", () => {
+  it("allows each role what the server allows", () => {
+    const as = (role: "viewer" | "editor" | "owner" | null) => ({
+      accounts: true,
+      role,
+      via: "account" as const,
+      user: null,
+    });
+    expect(can(as("viewer"), "viewer")).toBe(true);
+    expect(can(as("viewer"), "editor")).toBe(false);
+    expect(can(as("editor"), "editor") && !can(as("editor"), "owner")).toBe(true);
+    expect(can(as("owner"), "owner")).toBe(true);
+    expect(can(as(null), "viewer") || can(undefined, "viewer")).toBe(false);
+  });
+
+  it("words the change history", () => {
+    const entry = { id: 1, at: 0, actor: "ada@x.io", target: "kb_1", status: 202 };
+    expect(describeAction({ ...entry, action: "POST /api/kbs/{kb_id}/builds" })).toBe("started a build");
+    expect(describeAction({ ...entry, action: "signed in" })).toBe("signed in");
   });
 });

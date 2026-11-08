@@ -1,6 +1,6 @@
 /** Accessible UI primitives built on native elements, in the Mac vocabulary. Tokens come from styles.css. */
 import { Loader2, X } from "lucide-react";
-import { type ButtonHTMLAttributes, type ComponentProps, type ReactNode, useEffect, useRef } from "react";
+import { type ButtonHTMLAttributes, type ComponentProps, type ReactNode, useEffect, useId, useRef } from "react";
 
 export function cn(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(" ");
@@ -94,6 +94,7 @@ const STATUS: Record<string, [Tone, string]> = {
   running: ["accent", "Running"],
   queued: ["accent", "Waiting to start"],
   stale: ["warn", "Needs rebuild"],
+  missing: ["warn", "Not installed"],
   abstained: ["warn", "Declined to answer"],
   draft: ["neutral", "Not built yet"],
   pending: ["neutral", "Waiting"],
@@ -279,6 +280,19 @@ export function width(className: string | undefined): string {
 
 export function Input({ className, ...props }: ComponentProps<"input">) {
   return <input {...props} className={cn(CONTROL, width(className), "h-8", className)} />;
+}
+
+/** A text field with its label above, as in Mac sign-in and setup sheets. */
+export function Field({ label, className, ...props }: { label: string } & ComponentProps<"input">) {
+  const id = useId();
+  return (
+    <div className={className}>
+      <label htmlFor={id} className="block px-1 text-left text-sm font-medium text-slate">
+        {label}
+      </label>
+      <Input id={id} className="mt-1 h-9" {...props} />
+    </div>
+  );
 }
 
 export function Select({ className, children, ...props }: ComponentProps<"select">) {

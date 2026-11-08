@@ -2,8 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { FileSearch, MessageSquareQuote, ScanSearch } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, Navigate } from "react-router-dom";
-import { buttonClass, cn, ErrorNote, Skeleton } from "../../components/ui";
+import { AppIcon } from "../../components/Layout";
+import { buttonClass, cn, EmptyState, ErrorNote, Skeleton } from "../../components/ui";
 import { api, type KnowledgeBase } from "../../lib/api";
+import { can, useMe } from "../account/auth";
 
 /** The chatbot to open: the one used last, if it still exists, else the first. */
 export function openingChatbot(kbs: KnowledgeBase[], last: string | null): KnowledgeBase | undefined {
@@ -34,17 +36,7 @@ function Welcome() {
   return (
     <div className="flex min-h-full items-center justify-center bg-wall px-5 py-12">
       <div className="settle w-full max-w-md text-center">
-        <svg viewBox="0 0 24 24" className="mx-auto size-16 drop-shadow-sm" aria-hidden>
-          <rect width="24" height="24" rx="6" className="fill-accent" />
-          <path
-            d="M7.2 17 12 6.5 16.8 17M8.9 13.3h6.2"
-            fill="none"
-            stroke="white"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <AppIcon className="mx-auto size-16" />
         <h1 className="mt-6 font-display text-[2rem] leading-tight font-bold tracking-tight">Welcome to Archie</h1>
         <ul className="mt-9 space-y-6 text-left">
           <Feature icon={<FileSearch />} title="Reads your documents">
@@ -66,6 +58,7 @@ function Welcome() {
 }
 
 export function HomePage() {
+  const me = useMe();
   const kbs = useQuery({ queryKey: ["kbs"], queryFn: api.listKbs });
   if (kbs.isLoading) {
     return (
@@ -82,5 +75,10 @@ export function HomePage() {
     );
   }
   const target = openingChatbot(kbs.data ?? [], lastOpened());
-  return target ? <Navigate to={`/kb/${target.id}/ask`} replace /> : <Welcome />;
+  if (target) return <Navigate to={`/kb/${target.id}/ask`} replace />;
+  return can(me.data, "editor") ? (
+    <Welcome />
+  ) : (
+    <EmptyState title="No chatbots yet">When an editor creates one, it appears here for you to ask.</EmptyState>
+  );
 }

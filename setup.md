@@ -108,6 +108,36 @@ non-root user, health checks, `depends_on: service_healthy`, ONNX reranker (no P
 (`RAG_INSTALL_OCR=true` at build time), layout reader optional (`RAG_INSTALL_LAYOUT=true`: CPU-only PyTorch, about
 1.5 GB more).
 
+### Serving a chatbot to other people
+1. Point a domain at the server and open ports 80 and 443.
+2. In `.env`, set `RAG_DOMAIN=chat.example.com` and a long random `RAG_API_KEY` (this is the admin key; keep it to
+   yourself).
+3. `docker compose -f deploy/compose.yaml --env-file .env --profile https up -d`. Caddy gets and renews the
+   certificate; Archie is at `https://chat.example.com`.
+4. In Ask, press **Share** and switch on **Anyone with the link can ask**. Send the link, or paste the embed snippet
+   into your website: a chat button appears in the corner and opens the chatbot in a panel.
+
+People with the link can only ask that one chatbot questions (`/api/share/<token>/…`); settings, documents, other
+chatbots and the activity log still need the admin key. Each visitor may ask `RAG_SHARE_RATE_PER_MINUTE` questions
+a minute (default 20). **Reset Link** in the Share sheet stops the old link and every embed at once. Shared pages may
+be framed by any site; every other page refuses framing.
+
+### People and sign-in
+A fresh install is open to whoever can reach it (it listens on 127.0.0.1 only). To require sign-in, open **People**
+and create the owner account; from then on everyone signs in. Add people with **Add Person**: Archie makes an
+invitation link (one use, valid a week) to send them. Access levels:
+
+| Access | Can |
+|---|---|
+| Can ask | Ask chatbots questions |
+| Can edit | Also create, configure, build and share chatbots, and read activity and status |
+| Owner | Also manage people, read the change history and delete chatbots |
+
+Passwords are hashed with scrypt; sessions are HttpOnly, SameSite=Strict cookies stored server-side (only their
+hash), lasting 14 days. Sign-in is limited to 10 attempts a minute per address, and failed attempts appear in the
+change history. A forgotten password: an owner makes a **New Password Link**. `RAG_API_KEY` keeps working as an
+owner-level key for scripts and monitoring, and must be supplied to create the first owner when it is set.
+
 ### Optional readers
 | Extra | Adds | Install locally |
 |---|---|---|
@@ -156,7 +186,10 @@ gets less unrelated text. Enrichment is not in this table: it needs a chat model
 
 - Services bind to 127.0.0.1 and Docker publishes on 127.0.0.1. To expose them, set `RAG_PUBLISH_HOST`
   **and** `RAG_API_KEY`. A local non-loopback bind without a key is refused.
-- Source folders must be inside `RAG_DATA_ROOTS`.
+- Source folders must be inside `RAG_DATA_ROOTS`; the setup assistant's folder picker only lists those.
+- Share links are random 24-character tokens that allow questions to one chatbot only, rate-limited per visitor.
+  Behind the HTTPS profile, the visitor's address comes from the proxy chain (nginx believes `X-Forwarded-For` only
+  from private networks). Deleting a chatbot deletes its uploads and cached answers.
 - Never commit `.env` or documents other than the sample corpus (`data/sources/*` is git-ignored).
 
 ## 7. Verification status

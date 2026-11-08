@@ -3,6 +3,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom";
 import { Layout, ManageLayout } from "./components/Layout";
+import { InvitePage, RequireSignIn } from "./features/account/auth";
+import { PeoplePage } from "./features/account/PeoplePage";
 import { ActivityPage } from "./features/activity/ActivityPage";
 import { BuildPage } from "./features/build/BuildPage";
 import { ChatPage } from "./features/chat/ChatPage";
@@ -12,6 +14,7 @@ import { HealthPage } from "./features/health/HealthPage";
 import { HomePage } from "./features/kbs/HomePage";
 import { NewChatbotPage } from "./features/new/NewChatbotPage";
 import { SetupPage } from "./features/setup/SetupPage";
+import { SharedChatPage } from "./features/share/SharedChatPage";
 import "./styles.css";
 
 const queryClient = new QueryClient({
@@ -25,12 +28,20 @@ function Moved({ to }: { to: string }) {
 }
 
 const router = createBrowserRouter([
+  // Shared links stand alone: no sidebar, no Manage, nothing but the chatbot.
+  { path: "/share/:token", element: <SharedChatPage /> },
+  { path: "/invite/:token", element: <InvitePage /> },
   {
-    element: <Layout />,
+    element: (
+      <RequireSignIn>
+        <Layout />
+      </RequireSignIn>
+    ),
     children: [
       { path: "/", element: <HomePage /> },
       { path: "/new", element: <NewChatbotPage /> },
       { path: "/status", element: <HealthPage /> },
+      { path: "/people", element: <PeoplePage /> },
       { path: "/health", element: <Navigate to="/status" replace /> },
       { path: "/telemetry", element: <Navigate to="/status" replace /> },
       { path: "/kb/:kbId", element: <Navigate to="ask" replace /> },

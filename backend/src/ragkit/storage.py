@@ -1,4 +1,5 @@
-"""SQLite persistence for app state: knowledge bases, config versions, jobs, indexed documents, traces, cache.
+"""SQLite persistence for app state: knowledge bases, config versions, jobs, indexed documents, traces, cache,
+people, sessions and the audit log.
 
 One connection per ``Database`` guarded by a lock; WAL mode lets the API and the worker share the file.
 shortcut: single-node SQLite; move to Postgres behind this same interface for multi-node deployments.
@@ -124,7 +125,33 @@ CREATE TABLE IF NOT EXISTS answer_cache (
     last_asked_at REAL NOT NULL,
     PRIMARY KEY (scope, question_key)
 );
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL,
+    password_hash TEXT,
+    invite_hash TEXT UNIQUE,
+    invite_expires REAL,
+    disabled INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at REAL NOT NULL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target TEXT,
+    status INTEGER NOT NULL
+);
 """
+
+USER_FIELDS = "id, email, name, role, disabled, created_at, password_hash IS NOT NULL AS joined, invite_expires"
 
 TERMINAL_JOB_STATES = ("completed", "completed_with_errors", "failed", "cancelled")
 
@@ -147,6 +174,9 @@ class Database:
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(indexed_documents)")}
         if "report" not in columns:
             self._conn.execute("ALTER TABLE indexed_documents ADD COLUMN report TEXT")
+        if "share_token" not in {row["name"] for row in self._conn.execute("PRAGMA table_info(knowledge_bases)")}:
+            self._conn.execute("ALTER TABLE knowledge_bases ADD COLUMN share_token TEXT")
+        self._conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS kb_share ON knowledge_bases(share_token)")
 
     def close(self) -> None:
         self._conn.close()
@@ -187,7 +217,7 @@ class Database:
             self._insert_version(conn, kb_id, 1, config, now)
         return kb_id
 
-    def list_kbs(self) -> list[dict[str, Any]]:
+    def list_kbs(self, kb_id: str | None = None) -> list[dict[str, Any]]:
         return self._all(
             """SELECT kb.*, cv.index_hash AS active_index_hash,
                       (SELECT COUNT(*) FROM indexed_documents d WHERE d.collection = kb.active_collection)
@@ -196,17 +226,29 @@ class Database:
                           WHERE d.collection = kb.active_collection) AS chunk_count
                FROM knowledge_bases kb
                JOIN config_versions cv ON cv.kb_id = kb.id AND cv.version = kb.active_version
-               ORDER BY kb.created_at"""
+               WHERE ? IS NULL OR kb.id = ?
+               ORDER BY kb.created_at""",
+            (kb_id, kb_id),
         )
 
     def get_kb(self, kb_id: str) -> dict[str, Any] | None:
-        return next((kb for kb in self.list_kbs() if kb["id"] == kb_id), None)
+        return next(iter(self.list_kbs(kb_id)), None)
+
+    def get_kb_by_share(self, token: str) -> dict[str, Any] | None:
+        row = self._one("SELECT id FROM knowledge_bases WHERE share_token = ?", (token,))
+        return self.get_kb(row["id"]) if row else None
+
+    def set_share_token(self, kb_id: str, token: str | None) -> None:
+        self._run("UPDATE knowledge_bases SET share_token = ? WHERE id = ?", (token, kb_id))
 
     def get_kb_by_name(self, name: str) -> dict[str, Any] | None:
         return next((kb for kb in self.list_kbs() if kb["name"] == name), None)
 
     def delete_kb(self, kb_id: str) -> None:
-        self._run("DELETE FROM knowledge_bases WHERE id = ?", (kb_id,))
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM knowledge_bases WHERE id = ?", (kb_id,))
+            # Cached answers quote the documents, so they go with the chatbot.
+            conn.execute("DELETE FROM answer_cache WHERE scope LIKE ?", (f"{kb_id}:%",))
 
     def add_config_version(self, kb_id: str, config: KnowledgeBaseConfig) -> int:
         with self.transaction() as conn:
@@ -563,6 +605,90 @@ class Database:
             (scope_prefix + "%",),
         )
         return {"history_size": len(rows), "cache_size": min(capacity, len(rows)), "top": rows[:capacity]}
+
+    # People, sessions and the audit log
+
+    def user_count(self) -> int:
+        row = self._one("SELECT COUNT(*) AS n FROM users")
+        return int(row["n"]) if row else 0
+
+    def owner_count(self) -> int:
+        row = self._one("SELECT COUNT(*) AS n FROM users WHERE role = 'owner' AND disabled = 0")
+        return int(row["n"]) if row else 0
+
+    def create_user(
+        self,
+        email: str,
+        role: str,
+        name: str = "",
+        password_hash: str | None = None,
+        invite: tuple[str, float] | None = None,
+    ) -> str:
+        user_id = "user_" + uuid.uuid4().hex[:12]
+        self._run(
+            "INSERT INTO users (id, email, name, role, password_hash, invite_hash, invite_expires, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, email, name, role, password_hash, *(invite or (None, None)), time.time()),
+        )
+        return user_id
+
+    def list_users(self) -> list[dict[str, Any]]:
+        return self._all(f"SELECT {USER_FIELDS} FROM users ORDER BY created_at")  # noqa: S608
+
+    def get_user(self, user_id: str) -> dict[str, Any] | None:
+        return self._one(f"SELECT {USER_FIELDS} FROM users WHERE id = ?", (user_id,))  # noqa: S608
+
+    def user_login(self, email: str) -> dict[str, Any] | None:
+        """The row a sign-in checks: only people who joined and are not disabled."""
+        return self._one(
+            "SELECT id, password_hash FROM users WHERE email = ? AND disabled = 0 AND password_hash IS NOT NULL",
+            (email,),
+        )
+
+    def user_by_email(self, email: str) -> dict[str, Any] | None:
+        return self._one(f"SELECT {USER_FIELDS} FROM users WHERE email = ?", (email,))  # noqa: S608
+
+    def user_by_invite(self, invite_hash: str) -> dict[str, Any] | None:
+        return self._one(
+            f"SELECT {USER_FIELDS} FROM users WHERE invite_hash = ? AND invite_expires > ? AND disabled = 0",  # noqa: S608
+            (invite_hash, time.time()),
+        )
+
+    def update_user(self, user_id: str, **fields: Any) -> None:
+        allowed = {"name", "role", "password_hash", "invite_hash", "invite_expires", "disabled"}
+        assert set(fields) <= allowed, fields
+        assignments = ", ".join(f"{name} = ?" for name in fields)
+        self._run(f"UPDATE users SET {assignments} WHERE id = ?", (*fields.values(), user_id))  # noqa: S608
+
+    def delete_user(self, user_id: str) -> None:
+        self._run("DELETE FROM users WHERE id = ?", (user_id,))
+
+    def create_session(self, token_hash: str, user_id: str, expires_at: float) -> None:
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
+            conn.execute("INSERT INTO sessions VALUES (?, ?, ?)", (token_hash, user_id, expires_at))
+
+    def session_user(self, token_hash: str) -> dict[str, Any] | None:
+        return self._one(
+            "SELECT u.id, u.email, u.name, u.role FROM sessions s JOIN users u ON u.id = s.user_id "
+            "WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled = 0",
+            (token_hash, time.time()),
+        )
+
+    def end_sessions(self, *, token_hash: str | None = None, user_id: str | None = None) -> None:
+        if token_hash:
+            self._run("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+        if user_id:
+            self._run("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+
+    def audit(self, actor: str, action: str, target: str | None, status: int) -> None:
+        self._run(
+            "INSERT INTO audit_log (at, actor, action, target, status) VALUES (?, ?, ?, ?, ?)",
+            (time.time(), actor, action, target, status),
+        )
+
+    def audit_log(self, limit: int, offset: int = 0) -> list[dict[str, Any]]:
+        return self._all("SELECT * FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset))
 
 
 class JobConflictError(Exception):

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   FileText,
@@ -10,11 +10,13 @@ import {
   Plus,
   Settings,
   SlidersHorizontal,
+  Users,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
+import { can, useMe } from "../features/account/auth";
 import { api, getApiKey, type KnowledgeBase, setApiKey } from "../lib/api";
-import { Button, cn, Dialog, Group, Input, Row, Segmented, StatusDot } from "./ui";
+import { Button, cn, Dialog, ErrorNote, Group, Input, Row, Segmented, StatusDot } from "./ui";
 
 type Theme = "system" | "light" | "dark";
 
@@ -46,6 +48,102 @@ function useTheme(): [Theme, (theme: Theme) => void] {
     return () => query.removeEventListener("change", apply);
   }, [theme]);
   return [theme, setTheme];
+}
+
+/** Archie's app icon: the wine tile with its A. */
+export function AppIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={cn("drop-shadow-sm", className)} aria-hidden>
+      <rect width="24" height="24" rx="6" className="fill-accent" />
+      <path
+        d="M7.2 17 12 6.5 16.8 17M8.9 13.3h6.2"
+        fill="none"
+        stroke="white"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function AccountGroup() {
+  const me = useMe();
+  const queryClient = useQueryClient();
+  const [changing, setChanging] = useState(false);
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const signOut = useMutation({
+    mutationFn: api.signOut,
+    onSuccess: () => {
+      queryClient.clear();
+      window.location.assign("/");
+    },
+  });
+  const change = useMutation({
+    mutationFn: () => api.changePassword(current, next),
+    onSuccess: () => {
+      setChanging(false);
+      setCurrent("");
+      setNext("");
+    },
+  });
+  const user = me.data?.user;
+  if (!user) return null;
+  return (
+    <Group title="Account" footer={change.isSuccess ? "Password changed. Other devices were signed out." : undefined}>
+      <Row label={user.name || user.email} detail={user.name ? user.email : undefined}>
+        <Button size="sm" busy={signOut.isPending} onClick={() => signOut.mutate()}>
+          Sign Out
+        </Button>
+      </Row>
+      {changing ? (
+        <form
+          className="space-y-3 px-4 py-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            change.mutate();
+          }}
+        >
+          <input type="email" autoComplete="username" value={user.email} readOnly hidden />
+          <Input
+            type="password"
+            autoComplete="current-password"
+            placeholder="Current password"
+            aria-label="Current password"
+            required
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+          />
+          <Input
+            type="password"
+            autoComplete="new-password"
+            placeholder="New password, at least 10 characters"
+            aria-label="New password"
+            minLength={10}
+            required
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+          />
+          <ErrorNote error={change.error} />
+          <div className="flex justify-end gap-2">
+            <Button size="sm" onClick={() => setChanging(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" type="submit" variant="primary" busy={change.isPending}>
+              Change Password
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <Row label="Password">
+          <Button size="sm" onClick={() => setChanging(true)}>
+            Change…
+          </Button>
+        </Row>
+      )}
+    </Group>
+  );
 }
 
 export function Wordmark() {
@@ -136,6 +234,7 @@ function PreferencesDialog({
   theme: Theme;
   setTheme: (theme: Theme) => void;
 }) {
+  const me = useMe();
   const [key, setKey] = useState(getApiKey);
   const changed = key.trim() !== getApiKey();
   return (
@@ -173,17 +272,20 @@ function PreferencesDialog({
             />
           </Row>
         </Group>
-        <Group
-          title="Access key"
-          footer="Only needed when whoever runs Archie has protected it with a key. It is stored in this browser."
-        >
-          <div className="px-4 py-3">
-            <label htmlFor="api-key" className="sr-only">
-              Access key
-            </label>
-            <Input id="api-key" type="password" value={key} onChange={(e) => setKey(e.target.value)} />
-          </div>
-        </Group>
+        <AccountGroup />
+        {me.data?.via !== "account" && (
+          <Group
+            title="Access key"
+            footer="Only needed when whoever runs Archie has protected it with a key. It is stored in this browser."
+          >
+            <div className="px-4 py-3">
+              <label htmlFor="api-key" className="sr-only">
+                Access key
+              </label>
+              <Input id="api-key" type="password" value={key} onChange={(e) => setKey(e.target.value)} />
+            </div>
+          </Group>
+        )}
       </div>
     </Dialog>
   );
@@ -260,6 +362,8 @@ export function Layout() {
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 768px)").matches);
+  const me = useMe();
+  const editor = can(me.data, "editor");
   const kbs = useQuery({
     queryKey: ["kbs"],
     queryFn: api.listKbs,
@@ -285,7 +389,13 @@ export function Layout() {
   }, [kb]);
 
   const railHidden = !desktop && !menuOpen;
-  const title = kb?.name ?? (location.pathname.startsWith("/status") ? "Status" : "Archie");
+  const title =
+    kb?.name ??
+    (location.pathname.startsWith("/status")
+      ? "Status"
+      : location.pathname.startsWith("/people")
+        ? "People"
+        : "Archie");
 
   return (
     <div className="flex h-full bg-panel">
@@ -327,18 +437,27 @@ export function Layout() {
           {kbs.data?.length === 0 && <p className="px-2 py-1 text-sm text-rail-muted">No chatbots yet.</p>}
         </nav>
         <div className="space-y-0.5 border-t border-rule px-2.5 py-2.5">
-          <Link
-            to="/new"
-            className="press flex h-8 items-center gap-2.5 rounded-md px-2 text-sm font-medium text-accent hover:bg-rail-active/60"
-          >
-            <span className="grid size-6 place-items-center">
-              <Plus className="size-4" strokeWidth={2.25} />
-            </span>
-            New Chatbot
-          </Link>
-          <SidebarItem to="/status" icon={<HeartPulse />} trailing={<ServiceStatus />}>
-            Status
-          </SidebarItem>
+          {editor && (
+            <Link
+              to="/new"
+              className="press flex h-8 items-center gap-2.5 rounded-md px-2 text-sm font-medium text-accent hover:bg-rail-active/60"
+            >
+              <span className="grid size-6 place-items-center">
+                <Plus className="size-4" strokeWidth={2.25} />
+              </span>
+              New Chatbot
+            </Link>
+          )}
+          {editor && (
+            <SidebarItem to="/status" icon={<HeartPulse />} trailing={<ServiceStatus />}>
+              Status
+            </SidebarItem>
+          )}
+          {can(me.data, "owner") && (
+            <SidebarItem to="/people" icon={<Users />}>
+              People
+            </SidebarItem>
+          )}
           <button
             type="button"
             onClick={() => setPrefsOpen(true)}
@@ -365,7 +484,7 @@ export function Layout() {
             </button>
             <span className={cn("truncate text-base font-semibold", kbId && "max-md:sr-only")}>{title}</span>
           </div>
-          {kbId ? (
+          {kbId && editor ? (
             <Segmented
               label="View"
               value={inManage ? "manage" : "ask"}

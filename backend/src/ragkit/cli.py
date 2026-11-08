@@ -98,6 +98,7 @@ def _serve(settings: Settings, with_worker: bool, reload: bool) -> int:
         create_app(settings, in_process_worker=with_worker),
         host=settings.bind_host,
         port=settings.port,
+        forwarded_allow_ips=",".join(settings.trusted_proxies),
         log_config=None,
         access_log=False,
     )

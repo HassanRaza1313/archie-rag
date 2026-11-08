@@ -23,6 +23,9 @@ x-api: &api
     RAG_LOG_LEVEL: ${RAG_LOG_LEVEL:-INFO}
     RAG_CORS_ORIGINS: ${RAG_CORS_ORIGINS:-http://localhost:8080}
     RAG_MAX_UPLOAD_MB: ${RAG_MAX_UPLOAD_MB:-100}
+    RAG_SHARE_RATE_PER_MINUTE: ${RAG_SHARE_RATE_PER_MINUTE:-20}
+    # Only the ui container (nginx) forwards to the API, and it sends a single checked address.
+    RAG_TRUSTED_PROXIES: "*"
   extra_hosts:
     - "host.docker.internal:host-gateway"
   volumes:
@@ -96,6 +99,21 @@ services:
     entrypoint: ["/bin/sh", "-c", "for model in $$MODELS; do ollama pull $$model || exit 1; done"]
     restart: "no"
 
+  # HTTPS with automatic certificates: set RAG_DOMAIN (DNS pointing at this machine) and add --profile https.
+  https:
+    profiles: ["https"]
+    image: caddy:2.10.2
+    command: ["caddy", "reverse-proxy", "--from", "${RAG_DOMAIN:-localhost}", "--to", "ui:8080"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+    depends_on:
+      ui:
+        condition: service_started
+    restart: unless-stopped
+
   prometheus:
     profiles: ["observability"]
     image: prom/prometheus:v3.15.1
@@ -111,6 +129,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  caddy_data:
   prometheus_data:
   qdrant_data:
   ragkit_state:

@@ -25,6 +25,8 @@ export interface KnowledgeBase {
   chunks: number;
   active_job: JobRef | null;
   last_job: JobRef | null;
+  /** Anyone with /share/<token> may ask this chatbot questions; null when it is not shared. */
+  share_token: string | null;
 }
 
 export interface KnowledgeBaseDetail extends KnowledgeBase {
@@ -224,6 +226,36 @@ export class ApiError extends Error {
 }
 
 const API_KEY_STORAGE = "ragkit.apiKey";
+export const SIGNED_OUT = "archie:signed-out";
+
+export type Role = "viewer" | "editor" | "owner";
+
+export interface Me {
+  accounts: boolean;
+  role: Role | null;
+  via: "account" | "key" | "open" | null;
+  user: { id: string; email: string; name: string } | null;
+}
+
+export interface Person {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  disabled: number;
+  created_at: number;
+  joined: number;
+  invite_expires: number | null;
+}
+
+export interface AuditEntry {
+  id: number;
+  at: number;
+  actor: string;
+  action: string;
+  target: string | null;
+  status: number;
+}
 
 export function getApiKey(): string {
   try {
@@ -260,6 +292,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       /* non-JSON error body */
     }
+    // Signed out (session ended, account disabled): let the app show the sign-in screen.
+    if (response.status === 401 && !path.startsWith("/api/auth/")) window.dispatchEvent(new Event(SIGNED_OUT));
     throw new ApiError(response.status, detail);
   }
   return (response.status === 204 ? undefined : await response.json()) as T;
@@ -304,7 +338,57 @@ export interface DocumentChunk {
   edited: boolean;
 }
 
+export interface Folder {
+  name: string;
+  path: string;
+  files: number;
+}
+
+export interface FolderListing {
+  path: string | null;
+  parent: string | null;
+  files: number;
+  folders: Folder[];
+}
+
+export interface ModelCheck {
+  provider: string;
+  model: string;
+  ok: boolean;
+}
+
+export interface SetupModels {
+  embedding: ModelCheck;
+  generation: ModelCheck;
+  fallback_embedding: { provider: string; model: string } | null;
+  installed: string[];
+}
+
+/** Where a conversation's requests go: a chatbot (admin) or a share link (anyone with the link). */
+export const chatBase = (kbId: string) => `/api/kbs/${kbId}`;
+export const shareBase = (token: string) => `/api/share/${encodeURIComponent(token)}`;
+
+const patch = (body: unknown): RequestInit => ({ method: "PATCH", body: JSON.stringify(body) });
+
 export const api = {
+  me: () => request<Me>("/api/auth/me"),
+  signIn: (email: string, password: string) => request<Me>("/api/auth/sign-in", json({ email, password })),
+  signOut: () => request<void>("/api/auth/sign-out", { method: "POST" }),
+  createOwner: (email: string, name: string, password: string) =>
+    request<Me>("/api/auth/owner", json({ email, name, password })),
+  invitation: (token: string) =>
+    request<{ email: string; joined: boolean }>(`/api/auth/invite/${encodeURIComponent(token)}`),
+  acceptInvite: (token: string, name: string, password: string) =>
+    request<Me>(`/api/auth/invite/${encodeURIComponent(token)}`, json({ name, password })),
+  changePassword: (current: string, next: string) => request<void>("/api/auth/password", json({ current, new: next })),
+  people: () => request<Person[]>("/api/users"),
+  addPerson: (email: string, role: Role) =>
+    request<{ user: Person; invite_token: string }>("/api/users", json({ email, role })),
+  reinvite: (id: string) => request<{ invite_token: string }>(`/api/users/${id}/invite`, { method: "POST" }),
+  changePerson: (id: string, change: { role?: Role; disabled?: boolean }) =>
+    request<Person>(`/api/users/${id}`, patch(change)),
+  removePerson: (id: string) => request<void>(`/api/users/${id}`, { method: "DELETE" }),
+  audit: (limit = 100) => request<AuditEntry[]>(`/api/audit?limit=${limit}`),
   ready: () => request<{ ready: boolean; qdrant: boolean; ollama: boolean }>("/api/system/ready"),
   capabilities: () =>
     request<{ qdrant: { mode: string; hnsw: boolean }; auth: boolean; data_roots: string[] }>(
@@ -345,7 +429,13 @@ export const api = {
   stats: (id: string) => request<Stats>(`/api/kbs/${id}/stats`),
   evaluate: (id: string, items: unknown[], version?: number) =>
     request<EvalReport>(`/api/kbs/${id}/eval`, json({ items, version })),
-  suggestions: (id: string) => request<string[]>(`/api/kbs/${id}/suggestions`),
+  suggestions: (base: string) => request<string[]>(`${base}/suggestions`),
+  folders: (path?: string) =>
+    request<FolderListing>(`/api/system/folders${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  setupModels: (preset: string) => request<SetupModels>(`/api/setup/models?preset=${encodeURIComponent(preset)}`),
+  share: (id: string, enabled: boolean, reset = false) =>
+    request<{ share_token: string | null }>(`/api/kbs/${id}/share`, json({ enabled, reset })),
+  shared: (token: string) => request<{ name: string; ready: boolean; documents: number }>(shareBase(token)),
   slo: (kbId?: string) =>
     request<{ slos: Slo[]; alerts: Alert[] }>(`/api/slo${kbId ? `?kb_id=${encodeURIComponent(kbId)}` : ""}`),
   documents: (kbId: string) => request<IndexedDocument[]>(`/api/kbs/${kbId}/documents`),
@@ -362,8 +452,8 @@ export const api = {
     request<void>(`/api/kbs/${kbId}/documents/chunks?uri=${encodeURIComponent(uri)}&ordinal=${ordinal}`, {
       method: "DELETE",
     }),
-  clearSession: (kbId: string, sessionId: string) =>
-    request<void>(`/api/kbs/${kbId}/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
+  clearSession: (base: string, sessionId: string) =>
+    request<void>(`${base}/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
 };
 
 /** Parse one Server-Sent Events block (lines separated by \n, block terminated by a blank line). */
@@ -401,11 +491,11 @@ export async function* readSse<T>(response: Response, signal?: AbortSignal): Asy
 }
 
 export async function streamChat(
-  kbId: string,
+  base: string,
   body: { query: string; session_id: string; profile: Record<string, string> },
   signal: AbortSignal,
 ): Promise<AsyncGenerator<ChatEvent>> {
-  const response = await fetch(`/api/kbs/${kbId}/chat`, {
+  const response = await fetch(`${base}/chat`, {
     method: "POST",
     headers: headers(true),
     body: JSON.stringify(body),

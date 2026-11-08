@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from ragkit.config import SourceConfig
+from ragkit.config import FILE_TYPES, SourceConfig
 from ragkit.settings import Settings
 
 
@@ -62,6 +63,40 @@ def discover_folder(root: Path, config: SourceConfig) -> Iterator[DocumentRef]:
         if any(fnmatch.fnmatch(uri, pattern) for pattern in config.exclude):
             continue
         yield DocumentRef(uri=uri, path=path, size=path.stat().st_size)
+
+
+def count_files(folder: Path, limit: int = 1000) -> int:
+    """Supported files under ``folder``, counting at most ``limit``; hidden folders are skipped."""
+    count = seen = 0
+    for _, dirs, names in os.walk(folder):
+        dirs[:] = [name for name in dirs if not name.startswith(".")]
+        for name in names:
+            seen += 1
+            count += Path(name).suffix.lower() in FILE_TYPES
+            # shortcut: stops after 20k entries so huge trees stay fast; the UI then shows a lower bound.
+            if count >= limit or seen >= 20_000:
+                return count
+    return count
+
+
+def list_folders(settings: Settings, path: str | None) -> dict[str, object]:
+    """One level of the folder tree inside the allowed data roots, for the folder picker."""
+    roots = [Path(item).expanduser().resolve() for item in settings.data_roots]
+    if not path:
+        folders = [root for root in roots if root.is_dir()]
+        return {"path": None, "parent": None, "files": 0, "folders": [_folder(p, str(p)) for p in folders]}
+    folder = resolve_root(SourceConfig(type="local_folder", path=path), settings, "")
+    children = sorted(p for p in folder.iterdir() if p.is_dir() and not p.name.startswith("."))
+    return {
+        "path": str(folder),
+        "parent": None if folder in roots else str(folder.parent),
+        "files": count_files(folder),
+        "folders": [_folder(p, p.name) for p in children[:200]],
+    }
+
+
+def _folder(path: Path, name: str) -> dict[str, object]:
+    return {"name": name, "path": str(path), "files": count_files(path)}
 
 
 SOURCES: dict[str, Callable[[Path, SourceConfig], Iterator[DocumentRef]]] = {

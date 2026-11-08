@@ -150,3 +150,43 @@ Stretch (after M9): DOCX/HTML parsers, more data sources (S3, Confluence, ShareP
 | M9 Docs & hardening | Partly | Docs done; still open: Playwright e2e, a load test, a real-Ollama end-to-end run, OTLP exporter |
 
 Backend: 156 tests, 95 % line coverage. Frontend: 17 tests. Lint, format and type checks are clean on both.
+
+## 10. Next: a production-ready service (audit of November 2026)
+
+Goal: a company finds Archie on GitHub, runs a few commands, and serves a chatbot over its own documents to its own
+users, safely, at reasonable load (tens of concurrent chats per node, hundreds of chatbots, 100k+ passages).
+
+**Fixed in the audit:** cached answers ignored search filters (a filtered question could get an unfiltered answer);
+conversation memory was shared between chatbots that saw the same session id; deleting a chatbot left its uploaded
+files and cached answers behind; nginx dropped its security headers (CSP, frame denial) on the pages themselves;
+every request scanned all chatbots to find one.
+
+**Done in phase A:** A1 (share link and website widget, chat-only and rate-limited per visitor), A3 (live model
+check in the setup assistant, with Archie's built-in search model when the usual one is missing), A4 (folder picker),
+A5 (HTTPS profile with automatic certificates), A2 (accounts: owners, editors and viewers, invitation links,
+server-side sessions, an audit log). Next for A2: single sign-on (OpenID Connect) for Google, Microsoft and Okta.
+
+| Phase | Item | Why |
+|---|---|---|
+| A Ship to customers | A1 Share a chatbot: public chat page and embeddable widget, chat-only keys scoped to one chatbot, allowed origins | Today the only key is the admin key, so nobody else can be given the chatbot |
+| | A2 Accounts and roles (owner, editor, viewer), password or SSO sign-in, audit log | One shared key cannot be revoked per person |
+| | A3 Model step in the setup assistant: detect Ollama and models, or a cloud provider key, checked live; local embeddings by default | A missing model is found only when the first build fails |
+| | A4 Folder picker over the allowed data folders, with file counts | Typing a server path is not a Mac journey |
+| | A5 HTTPS by default (Caddy profile, automatic certificates), `rag deploy --domain` | Plain HTTP today |
+| B Holds under load | B1 Optional Postgres state store, memory in the database, database calls off the event loop | SQLite and in-process memory limit Archie to one API process |
+| | B2 Rate limits and quotas per key and per chatbot | None today |
+| | B3 Published load test (sizing guide per model server) | Scale claims need numbers |
+| | B4 Backup and restore (`rag backup`) | No recovery path today |
+| C Security and privacy | C1 Hashed, rotatable keys stored in the database | Keys live in environment variables |
+| | C2 Retention and erasure: question storage off, redacted or full per chatbot; export; delete purges everything | GDPR erasure and minimisation |
+| | C3 Access filters that can never be dropped (per-document permissions) | Needed before connectors bring permissions; the broaden retry drops user filters by design |
+| | C4 Prompt-injection defences for untrusted sources: hidden text stripped, instruction-like passages flagged | Connectors and web pages are untrusted |
+| | C5 Dependency and image scanning in CI (pip-audit, npm audit, Trivy), SBOM | Supply chain |
+| D Reads everything | D1 Images (PNG, JPEG, TIFF, WebP) through OCR | Scans and screenshots are common |
+| | D2 Audio and video through local transcription (faster-whisper), timestamps cited like pages | Meetings, calls, lectures |
+| | D3 CSV, JSON, email (.eml, .msg), EPUB, RTF, OpenDocument | Everyday formats |
+| | D4 Release image ships the layout reader, so Office files are never skipped | The welcome screen promises them |
+| E Parity with RAGFlow | E1 MCP server; E2 connectors with incremental sync (S3, Drive, SharePoint, sitemap, Confluence, Notion); E3 auto metadata and filters; E4 document summaries and page index; E5 graph and tree (deferred); E6 multilingual | See the RAGFlow comparison |
+
+Order: A1, A3, A4 with C1 and C2 first (they make Archie something a client can run and hand out), then D1 and D2,
+then B1 and B2, then E.
