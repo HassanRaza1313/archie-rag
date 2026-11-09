@@ -40,7 +40,7 @@ function Welcome() {
         <h1 className="mt-6 font-display text-[2rem] leading-tight font-bold tracking-tight">Welcome to Archie</h1>
         <ul className="mt-9 space-y-6 text-left">
           <Feature icon={<FileSearch />} title="Reads your documents">
-            PDFs, Word, PowerPoint, Excel and more, from a folder or uploaded.
+            Documents, spreadsheets, email, images, even recordings, from a folder or uploaded.
           </Feature>
           <Feature icon={<MessageSquareQuote />} title="Answers with sources">
             Every answer shows the passages it came from, or says when it doesn't know.

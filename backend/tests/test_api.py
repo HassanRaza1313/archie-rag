@@ -173,6 +173,8 @@ def test_uploads_source(client: TestClient, settings: Settings) -> None:
     traversal = [("files", ("../../escape.md", b"# x", "text/markdown"))]
     assert client.post(f"/api/kbs/{kb['id']}/uploads", files=traversal).status_code == 201
     assert not (settings.state_dir / "escape.md").exists()
+    again = client.post(f"/api/kbs/{kb['id']}/uploads", files=[("files", ("notes.md", b"# v2", "text/markdown"))])
+    assert again.json()["saved"][0]["name"] == "notes 2.md"  # a second file never replaces the first
     assert build(client, kb["id"])["status"] == "completed"
     assert client.delete(f"/api/kbs/{kb['id']}").status_code == 204
     assert not (settings.uploads_dir / kb["id"]).exists()  # deleting a chatbot deletes its files
@@ -221,7 +223,13 @@ def test_serves_built_ui(settings: Settings, registry: FakeRegistry, tmp_path: P
     (dist / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
     (dist / "favicon.svg").write_text("<svg/>", encoding="utf-8")
     with TestClient(create_app(settings.model_copy(update={"ui_dist_dir": dist}), providers=registry)) as test_client:  # type: ignore[arg-type]
-        assert test_client.get("/").text == "<html>app</html>"
+        page = test_client.get("/")
+        assert page.text == "<html>app</html>" and page.headers["x-frame-options"] == "DENY"
+        assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+        shared = test_client.get("/share/abc")
+        assert (
+            "frame-ancestors *" in shared.headers["content-security-policy"] and "x-frame-options" not in shared.headers
+        )
         assert test_client.get("/chatbots/kb_1/chat").text == "<html>app</html>"
         assert test_client.get("/assets/app.js").text == "console.log(1)"
         assert test_client.get("/favicon.svg").text == "<svg/>"

@@ -10,8 +10,10 @@ x-api: &api
     dockerfile: deploy/docker/Dockerfile
     target: api
     args:
-      INSTALL_OCR: ${RAG_INSTALL_OCR:-false}
-      INSTALL_LAYOUT: ${RAG_INSTALL_LAYOUT:-false}
+      # Every reader by default, so scans, images, Office files and recordings all work (about 2 GB more).
+      INSTALL_OCR: ${RAG_INSTALL_OCR:-true}
+      INSTALL_LAYOUT: ${RAG_INSTALL_LAYOUT:-true}
+      INSTALL_AUDIO: ${RAG_INSTALL_AUDIO:-true}
   # Only infrastructure values are passed in; paths inside the container come from the image.
   environment:
     RAG_OLLAMA_URL: ${RAG_OLLAMA_URL:-http://host.docker.internal:11434}
@@ -57,6 +59,8 @@ services:
   worker:
     <<: *api
     command: ["ragkit", "worker"]
+    # A ceiling for document parsing: a hostile or huge file fails on its own instead of exhausting the host.
+    mem_limit: ${RAG_WORKER_MEMORY:-6g}
     healthcheck:
       disable: true
 
@@ -103,7 +107,15 @@ services:
   https:
     profiles: ["https"]
     image: caddy:2.10.2
-    command: ["caddy", "reverse-proxy", "--from", "${RAG_DOMAIN:-localhost}", "--to", "ui:8080"]
+    command:
+      - caddy
+      - reverse-proxy
+      - --from
+      - ${RAG_DOMAIN:-localhost}
+      - --to
+      - ui:8080
+      - --header-down
+      - "Strict-Transport-Security: max-age=31536000"
     ports:
       - "80:80"
       - "443:443"

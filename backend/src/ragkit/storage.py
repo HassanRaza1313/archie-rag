@@ -84,7 +84,8 @@ CREATE TABLE IF NOT EXISTS indexed_documents (
 CREATE TABLE IF NOT EXISTS enrichment_cache (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    kb_id TEXT
 );
 CREATE TABLE IF NOT EXISTS chunk_edits (
     kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
@@ -177,6 +178,8 @@ class Database:
         if "share_token" not in {row["name"] for row in self._conn.execute("PRAGMA table_info(knowledge_bases)")}:
             self._conn.execute("ALTER TABLE knowledge_bases ADD COLUMN share_token TEXT")
         self._conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS kb_share ON knowledge_bases(share_token)")
+        if "kb_id" not in {row["name"] for row in self._conn.execute("PRAGMA table_info(enrichment_cache)")}:
+            self._conn.execute("ALTER TABLE enrichment_cache ADD COLUMN kb_id TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -249,6 +252,7 @@ class Database:
             conn.execute("DELETE FROM knowledge_bases WHERE id = ?", (kb_id,))
             # Cached answers quote the documents, so they go with the chatbot.
             conn.execute("DELETE FROM answer_cache WHERE scope LIKE ?", (f"{kb_id}:%",))
+            conn.execute("DELETE FROM enrichment_cache WHERE kb_id = ?", (kb_id,))  # written from its documents
 
     def add_config_version(self, kb_id: str, config: KnowledgeBaseConfig) -> int:
         with self.transaction() as conn:
@@ -433,8 +437,11 @@ class Database:
         row = self._one("SELECT value FROM enrichment_cache WHERE key = ?", (key,))
         return json.loads(row["value"]) if row else None
 
-    def enrichment_put(self, key: str, value: dict[str, Any]) -> None:
-        self._run("INSERT OR REPLACE INTO enrichment_cache VALUES (?, ?, ?)", (key, json.dumps(value), time.time()))
+    def enrichment_put(self, key: str, value: dict[str, Any], kb_id: str | None = None) -> None:
+        self._run(
+            "INSERT OR REPLACE INTO enrichment_cache (key, value, created_at, kb_id) VALUES (?, ?, ?, ?)",
+            (key, json.dumps(value), time.time(), kb_id),
+        )
 
     # Chunk edits: hand corrections that survive rebuilds while the document is unchanged
 
@@ -686,6 +693,9 @@ class Database:
             "INSERT INTO audit_log (at, actor, action, target, status) VALUES (?, ?, ?, ?, ?)",
             (time.time(), actor, action, target, status),
         )
+
+    def purge_audit(self, older_than: float) -> int:
+        return self._run("DELETE FROM audit_log WHERE at < ?", (older_than,))
 
     def audit_log(self, limit: int, offset: int = 0) -> list[dict[str, Any]]:
         return self._all("SELECT * FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset))

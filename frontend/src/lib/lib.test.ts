@@ -357,6 +357,7 @@ describe("accounts", () => {
       role,
       via: "account" as const,
       user: null,
+      key_required: false,
     });
     expect(can(as("viewer"), "viewer")).toBe(true);
     expect(can(as("viewer"), "editor")).toBe(false);

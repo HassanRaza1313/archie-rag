@@ -107,6 +107,7 @@ async def enrich_chunks(
     config: EnrichmentConfig,
     provider: ModelProvider,
     db: Database,
+    kb_id: str | None = None,
 ) -> tuple[list[Enrichment], dict[str, int]]:
     """Enrich every chunk; returns one Enrichment per chunk and counts of cached, generated and failed calls."""
     counts = {"cached": 0, "generated": 0, "failed": 0}
@@ -130,7 +131,8 @@ async def enrich_chunks(
                 logger.warning("enrichment failed for a chunk of %s: %s", document.title, exc)
                 return Enrichment()
         counts["generated"] += 1
-        db.enrichment_put(key, {"context": result.context, "questions": result.questions, "keywords": result.keywords})
+        value = {"context": result.context, "questions": result.questions, "keywords": result.keywords}
+        db.enrichment_put(key, value, kb_id)
         return result
 
     return list(await asyncio.gather(*(one(chunk) for chunk in chunks))), counts

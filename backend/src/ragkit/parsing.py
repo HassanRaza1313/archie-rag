@@ -17,7 +17,7 @@ import itertools
 import re
 import statistics
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
@@ -77,13 +77,16 @@ def parse_document(path: Path, config: ParsingConfig) -> ParsedDocument:
 
 
 def _read(path: Path, config: ParsingConfig) -> ParsedDocument:
+    from ragkit.formats import IMAGE_TYPES, READERS  # formats builds on this module, so it loads on first use
+
     suffix = path.suffix.lower()
-    plain = suffix in (".md", ".txt", ".html")  # the built-in HTML reader skips page chrome that Docling keeps
+    # Built-in readers only: the HTML reader skips page chrome that Docling keeps; images may use either.
+    plain = suffix in (".md", ".txt", ".html") or (suffix in READERS and suffix not in IMAGE_TYPES)
     if not plain and (config.engine == "layout" or (config.engine == "auto" and suffix in LAYOUT_ONLY)):
         from ragkit.layout import parse_layout
 
         return parse_layout(path, config)
-    parser = PARSERS.get(suffix)
+    parser = PARSERS.get(suffix) or READERS.get(suffix)
     if parser is None:
         if suffix in LAYOUT_ONLY:
             raise ValueError(f"'{suffix}' files need the layout reader (set the reader to auto or layout)")
@@ -407,7 +410,7 @@ def _join_lines(lines: list[_Line]) -> str:
     return text
 
 
-def table_to_markdown(rows: list[list[str | None]]) -> str:
+def table_to_markdown(rows: Sequence[Sequence[str | None]]) -> str:
     cleaned = [[(cell or "").replace("\n", " ").replace("|", "\\|").strip() for cell in row] for row in rows if row]
     cleaned = [row for row in cleaned if any(row)]
     if not cleaned:

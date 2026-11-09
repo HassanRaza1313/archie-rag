@@ -56,7 +56,8 @@ def test_passwords_and_role_rules() -> None:
 
 
 def test_open_until_the_first_account_then_roles_apply(app: TestClient, corpus: Path) -> None:
-    assert app.get("/api/auth/me").json() == {"accounts": False, "role": "owner", "via": "open", "user": None}
+    open_me = {"accounts": False, "role": "owner", "via": "open", "user": None, "key_required": False}
+    assert app.get("/api/auth/me").json() == open_me
     kb = create_kb(app, corpus)  # open local install: no sign-in yet
     short = app.post("/api/auth/owner", json={"email": "a@x.io", "password": "short"})
     assert short.status_code == 422
@@ -138,6 +139,28 @@ def test_owners_cannot_lock_themselves_out(app: TestClient) -> None:
 
     reset = bo.post(f"/api/users/{second_id}/invite").json()["invite_token"]
     assert person(app).get(f"/api/auth/invite/{reset}").json() == {"email": "bo@x.io", "joined": True}
+
+
+def test_open_install_is_open_only_to_local_networks(settings: Settings, registry: FakeRegistry) -> None:
+    app = create_app(settings, providers=registry)
+    with TestClient(app, client=("8.8.8.8", 4000)) as internet:
+        lan = TestClient(app, client=("192.168.1.20", 4000))  # shares the started app
+        assert internet.get("/api/kbs").status_code == 401  # e.g. behind the HTTPS profile without accounts or a key
+        body = {"email": "eve@x.io", "password": PASSWORD}
+        assert internet.post("/api/auth/owner", json=body).status_code == 401
+        assert internet.get("/api/auth/me").json()["key_required"] is False
+        assert lan.get("/api/kbs").status_code == 200
+
+
+def test_viewers_do_not_see_share_links(app: TestClient, corpus: Path) -> None:
+    kb = create_kb(app, corpus)
+    app.post("/api/auth/owner", json={"email": "ada@x.io", "password": PASSWORD})
+    assert app.post(f"/api/kbs/{kb['id']}/share", json={"enabled": True}).json()["share_token"]
+    _, token = invite(app, "vic@x.io", "viewer")
+    viewer = join(app, token)
+    assert viewer.get(f"/api/kbs/{kb['id']}").json()["share_token"] is None
+    assert viewer.get("/api/kbs").json()[0]["share_token"] is None
+    assert app.get("/api/kbs").json()[0]["share_token"]
 
 
 def test_api_key_still_works_and_guards_the_first_owner(settings: Settings, registry: FakeRegistry) -> None:

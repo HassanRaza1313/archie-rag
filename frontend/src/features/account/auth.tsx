@@ -38,12 +38,23 @@ function useSignedIn() {
   };
 }
 
-function SignInPage({ accounts }: { accounts: boolean }) {
+function SignInPage({ accounts, keyRequired }: { accounts: boolean; keyRequired: boolean }) {
   const signedIn = useSignedIn();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const signIn = useMutation({ mutationFn: () => api.signIn(email, password), onSuccess: signedIn });
 
+  if (!accounts && !keyRequired) {
+    // No accounts and no key: an install that only its own machine and network may use until it gets an owner.
+    return (
+      <Card
+        title="Archie isn't open to the internet yet"
+        body="Open it from the computer it runs on, or its local network, and create the owner account under People. Then everyone can sign in from anywhere."
+      >
+        <span />
+      </Card>
+    );
+  }
   if (!accounts) {
     // Protected by the admin key and nobody has an account yet.
     return (
@@ -118,7 +129,7 @@ export function RequireSignIn({ children }: { children: ReactNode }) {
 
   if (me.isLoading) return <div className="h-full bg-wall" />;
   if (me.data?.role) return <>{children}</>;
-  return <SignInPage accounts={me.data?.accounts ?? true} />;
+  return <SignInPage accounts={me.data?.accounts ?? true} keyRequired={me.data?.key_required ?? true} />;
 }
 
 /** Opened from an invitation (or a password reset link): choose a password and you're in. */

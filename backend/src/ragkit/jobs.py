@@ -29,6 +29,7 @@ from typing import Any
 from ragkit.chunking import Chunk, chunk_document
 from ragkit.config import KnowledgeBaseConfig, ParsingConfig
 from ragkit.enrichment import Enrichment, enrich_chunks
+from ragkit.formats import MEDIA_TYPES
 from ragkit.index import VectorIndex, collection_name, point_id
 from ragkit.parsing import ParsedDocument, parse_document
 from ragkit.privacy import Redactor
@@ -334,7 +335,11 @@ class Builder:
             return
         loop = asyncio.get_running_loop()
         options = parsing.model_dump()
-        timeout = self.settings.parse_timeout_s
+
+        def limit(ref: DocumentRef) -> float:
+            media = ref.path.suffix.lower() in MEDIA_TYPES
+            return self.settings.transcribe_timeout_s if media else self.settings.parse_timeout_s
+
         suspects: set[str] = set()  # running when a worker crashed: retried alone
         pools_worked = False
         while queue:
@@ -356,17 +361,17 @@ class Builder:
                         ref = queue.popleft()
                         future = loop.run_in_executor(pool, _parse_in_worker, str(ref.path), options)
                         future.add_done_callback(_retrieve)
-                        running[future] = (ref, time.monotonic())
+                        running[future] = (ref, time.monotonic() + limit(ref))  # its deadline
                     if not running:
                         break  # the next file needs a pool of a different kind
-                    oldest = min(started for _, started in running.values())
+                    soonest = min(deadline for _, deadline in running.values())
                     done, _ = await asyncio.wait(
-                        running, timeout=max(0.0, oldest + timeout - time.monotonic()), return_when=FIRST_COMPLETED
+                        running, timeout=max(0.0, soonest - time.monotonic()), return_when=FIRST_COMPLETED
                     )
                     if not done:
                         late = min(running, key=lambda future: running[future][1])
                         ref, _ = running.pop(late)
-                        yield ref, None, f"parsing took longer than {timeout:.0f} s, so this file was skipped"
+                        yield ref, None, f"parsing took longer than {limit(ref):.0f} s, so this file was skipped"
                         queue.extendleft(reversed([other for other, _ in running.values()]))
                         running.clear()
                         _terminate(pool)
@@ -442,7 +447,7 @@ class Builder:
         enrichments = [Enrichment() for _ in chunks]
         if config.enrichment.enabled and chunks:
             provider = self.providers.get(config.enrichment.provider)
-            enrichments, counts = await enrich_chunks(chunks, parsed, config.enrichment, provider, self.db)
+            enrichments, counts = await enrich_chunks(chunks, parsed, config.enrichment, provider, self.db, kb_id)
             enrichment_counts.update(counts)
             for chunk, enrichment in zip(chunks, enrichments, strict=True):
                 if extra := enrichment.search_text():
@@ -567,6 +572,9 @@ def _percentile(values: list[int], pct: int) -> int:
     return values[min(len(values) - 1, round((len(values) - 1) * pct / 100))]
 
 
+AUDIT_RETENTION_DAYS = 365  # the change history keeps a year
+
+
 async def run_worker(builder: Builder, poll_s: float = 1.0, stop: asyncio.Event | None = None) -> None:
     """Claim and run queued builds until ``stop`` is set; periodically purge expired traces."""
     stop = stop or asyncio.Event()
@@ -593,6 +601,7 @@ def purge_traces(db: Database) -> None:
     for kb in db.list_kbs():
         _, config = db.get_config(kb["id"])
         db.purge_traces(kb["id"], time.time() - config.telemetry.retention_days * 86400)
+    db.purge_audit(time.time() - AUDIT_RETENTION_DAYS * 86400)
 
 
 def is_terminal(status: str) -> bool:

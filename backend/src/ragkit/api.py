@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import importlib.util
+import ipaddress
 import json
 import logging
 import re
@@ -55,6 +57,7 @@ from ragkit.config import (
 )
 from ragkit.enrichment import Enrichment
 from ragkit.evaluation import GoldenItem, evaluate
+from ragkit.formats import IMAGE_TYPES, MEDIA_TYPES
 from ragkit.index import BUILTIN_FILTER_FIELDS, VectorIndex
 from ragkit.jobs import BUILD_STAGES, Builder, is_terminal, run_worker
 from ragkit.layout import layout_available
@@ -247,8 +250,8 @@ def create_app(
         cookie = request.cookies.get(SESSION_COOKIE)
         if cookie and (user := context.db.session_user(token_hash(cookie))):
             return Identity(user["email"], user["role"], user["id"])
-        if not settings.api_key and context.db.user_count() == 0:
-            return Identity("local", "owner")  # a fresh local install: open until the first account exists
+        if not settings.api_key and context.db.user_count() == 0 and _is_local(request):
+            return Identity("local", "owner")  # a fresh install, used from its own machine or network
         return None
 
     @app.middleware("http")
@@ -393,6 +396,7 @@ def create_app(
             "accounts": context.db.user_count() > 0,
             "role": identity.role if identity else None,
             "via": None if identity is None else "account" if user else "key" if identity.name == "API key" else "open",
+            "key_required": bool(context.settings.api_key),
             "user": {key: user[key] for key in ("id", "email", "name")} if user else None,
         }
 
@@ -603,9 +607,14 @@ def create_app(
 
     # Knowledge bases and configs
 
+    def for_role(request: Request, kb: dict[str, Any]) -> dict[str, Any]:
+        """A viewer may ask, not hand the chatbot to others, so the share token is left out."""
+        identity: Identity | None = request.state.identity
+        return kb if identity and rank(identity.role) >= rank("editor") else kb | {"share_token": None}
+
     @app.get("/api/kbs")
-    async def list_kbs(context: Ctx) -> list[dict[str, Any]]:
-        return [describe(context, kb) for kb in context.db.list_kbs()]
+    async def list_kbs(request: Request, context: Ctx) -> list[dict[str, Any]]:
+        return [for_role(request, describe(context, kb)) for kb in context.db.list_kbs()]
 
     @app.post("/api/kbs", status_code=201)
     async def create_kb(body: CreateKnowledgeBase, context: Ctx) -> dict[str, Any]:
@@ -618,10 +627,10 @@ def create_app(
         return describe(context, kb_or_404(context, kb_id))
 
     @app.get("/api/kbs/{kb_id}")
-    async def get_kb(kb_id: str, context: Ctx) -> dict[str, Any]:
+    async def get_kb(kb_id: str, request: Request, context: Ctx) -> dict[str, Any]:
         kb = kb_or_404(context, kb_id)
         _, config = context.db.get_config(kb_id)
-        return describe(context, kb) | {"config": config.model_dump()}
+        return for_role(request, describe(context, kb)) | {"config": config.model_dump()}
 
     @app.delete("/api/kbs/{kb_id}", status_code=204)
     async def delete_kb(kb_id: str, context: Ctx) -> None:
@@ -737,7 +746,7 @@ def create_app(
             if not name or Path(name).suffix.lower() not in config.source.file_types:
                 raise HTTPException(422, f"'{name}' is not an allowed file type")
             size = 0
-            destination = target / name
+            destination = _free_name(target, name)
             with destination.open("wb") as handle:
                 while block := await item.read(1 << 20):
                     size += len(block)
@@ -746,7 +755,7 @@ def create_app(
                         destination.unlink(missing_ok=True)
                         raise HTTPException(413, f"'{name}' exceeds {context.settings.max_upload_mb} MB")
                     handle.write(block)
-            saved.append({"name": name, "bytes": size})
+            saved.append({"name": destination.name, "bytes": size})
         return {"saved": saved}
 
     async def suggest(context: AppContext, kb: dict[str, Any]) -> list[str]:
@@ -980,6 +989,17 @@ async def _validate(context: AppContext, kb: dict[str, Any], config: KnowledgeBa
                 "msg": f"{office} Word, PowerPoint or Excel file(s) will be skipped: {reason}.",
             }
         )
+    by_type = checks.get("source", {}).get("by_type", {})
+    for kinds, needed, extra in (
+        (IMAGE_TYPES, "rapidocr_onnxruntime", "ocr"),
+        (MEDIA_TYPES, "faster_whisper", "audio"),
+    ):
+        count = sum(n for suffix, n in by_type.items() if suffix in kinds)
+        if count and importlib.util.find_spec(needed) is None:
+            what = "image(s)" if extra == "ocr" else "audio or video file(s)"
+            warnings.append(
+                {"stage": "parsing", "msg": f"{count} {what} will be skipped: install the '{extra}' extra."}
+            )
     if config.enrichment.enabled:
         stats = context.db.collection_stats(kb["active_collection"]) if kb.get("active_collection") else {}
         estimate = f" (about {stats['chunks']} for the last build)" if stats.get("chunks") else ""
@@ -1072,7 +1092,44 @@ def _sse_response(stream: AsyncIterator[str]) -> StreamingResponse:
     )
 
 
+def _security_headers(path: str) -> dict[str, str]:
+    """The headers nginx sends in the split setup; shared chatbots may be framed by any site (the widget)."""
+    shared = path.startswith("/share/")
+    ancestors = "*" if shared else "'none'"
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        f"connect-src 'self'; frame-ancestors {ancestors}",
+    }
+    return headers if shared else headers | {"X-Frame-Options": "DENY"}
+
+
+def _free_name(folder: Path, name: str) -> Path:
+    """``name`` in ``folder``, or 'name 2.pdf', 'name 3.pdf'... when taken (as the Finder names copies)."""
+    candidate, stem, suffix, number = folder / name, Path(name).stem, Path(name).suffix, 2
+    while candidate.exists():
+        candidate, number = folder / f"{stem} {number}{suffix}", number + 1
+    return candidate
+
+
+def _is_local(request: Request) -> bool:
+    """The client is this machine or a private network (after trusted proxies are resolved)."""
+    host = request.client.host if request.client else ""
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return True  # not an IP address: a Unix socket or the test client, never a remote visitor
+
+
 def _mount_ui(app: FastAPI, dist: Path) -> None:
+    @app.middleware("http")
+    async def secure_pages(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            response.headers.update(_security_headers(request.url.path))
+        return response
+
     app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
     index_html = dist / "index.html"
     safe_name = re.compile(r"^[\w.-]+$")

@@ -228,7 +228,8 @@ class Agent:
         except ProviderError as exc:
             trace.outcome = "error"
             trace.error = {"stage": current_stage, "type": "ProviderError", "message": str(exc)}
-            yield {"type": "error", "message": str(exc), "trace_id": trace.id}
+            message = "Archie couldn't reach its model server. Try again shortly; details are in Activity."
+            yield {"type": "error", "message": message, "trace_id": trace.id}
         except Exception as exc:
             logger.exception("chat failed at %s", current_stage)
             trace.outcome = "error"

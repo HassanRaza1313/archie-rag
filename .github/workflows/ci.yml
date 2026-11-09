@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ["3.10", "3.12"]
+        python: ["3.11", "3.12"]
     defaults:
       run:
         working-directory: backend
@@ -53,6 +53,29 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
+          python-version: "3.12"
+      - name: Python dependencies have no known vulnerabilities
+        working-directory: backend
+        run: |
+          uv export --frozen --no-hashes --all-extras --no-emit-project > "$RUNNER_TEMP/requirements.txt"
+          # torch and torchvision come from the PyTorch CPU index, which the advisory database does not cover.
+          uvx pip-audit==2.9.0 -r "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Shipped JavaScript dependencies have no known high-severity vulnerabilities
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
   scripts:
     runs-on: ubuntu-latest
     steps:
@@ -82,4 +105,15 @@ jobs:
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/api/system/health && break; sleep 2; done
           curl -fsS http://127.0.0.1:8000/ | grep -q '<div id="root">'
           curl -fsS http://127.0.0.1:8000/api/schema | grep -q ChunkingConfig
+          curl -fsSI http://127.0.0.1:8000/ | grep -qi "frame-ancestors 'none'"
+          curl -fsSI http://127.0.0.1:8000/share/x | grep -qi "frame-ancestors \*"
           docker logs ragkit
+      - name: Smoke-test the web server's headers and log redaction
+        run: |
+          docker run -d --name ui -e RAG_API_UPSTREAM=http://127.0.0.1:9 -p 8080:8080 ragkit-ui:ci
+          for i in $(seq 1 15); do curl -fsS http://127.0.0.1:8080/healthz && break; sleep 1; done
+          curl -fsSI http://127.0.0.1:8080/ | grep -qi "content-security-policy: .*frame-ancestors 'none'"
+          curl -fsSI http://127.0.0.1:8080/share/secret-token | grep -qi "frame-ancestors \*"
+          curl -fsS -o /dev/null http://127.0.0.1:8080/invite/secret-token
+          ! docker logs ui 2>&1 | grep -q secret-token
+          docker logs ui 2>&1 | grep -q "/share/\[token\]"

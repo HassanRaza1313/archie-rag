@@ -37,7 +37,7 @@ cmd_setup() {
   if have uv; then
     (cd "$BACKEND" && uv sync --frozen --extra rerank --extra dev)
   else
-    have python3 || have python || fail "Python 3.10+ is required (or install uv: https://docs.astral.sh/uv/)"
+    have python3 || have python || fail "Python 3.11+ is required (or install uv: https://docs.astral.sh/uv/)"
     local py; py="$(command -v python3 || command -v python)"
     [[ -d "$BACKEND/.venv" ]] || "$py" -m venv "$BACKEND/.venv"
     if [[ -x "$BACKEND/.venv/bin/python" ]]; then PYTHON="$BACKEND/.venv/bin/python"; else PYTHON="$BACKEND/.venv/Scripts/python.exe"; fi

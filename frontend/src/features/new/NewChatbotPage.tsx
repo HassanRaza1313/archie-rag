@@ -14,7 +14,10 @@ const PRESETS: { name: string; title: string; body: string }[] = [
 ];
 
 const STEPS = ["Name", "Documents", "Answers"] as const;
-const ACCEPT = ".pdf,.docx,.pptx,.xlsx,.html,.md,.txt";
+const ACCEPT = [
+  ".pdf,.docx,.pptx,.xlsx,.html,.md,.txt,.csv,.tsv,.json,.eml,.epub,.odt,.ods,.odp",
+  ".png,.jpg,.jpeg,.tif,.tiff,.webp,.bmp,.mp3,.wav,.m4a,.ogg,.flac,.mp4,.mov,.webm,.mkv",
+].join(",");
 
 /** A selectable row in a grouped list, with a checkmark when chosen (as in macOS lists and sheets). */
 function Choice({
@@ -165,7 +168,7 @@ export function NewChatbotPage() {
           <div className="mt-8">
             <h1 className="text-center font-display text-2xl font-bold tracking-tight">Choose its documents</h1>
             <p className="mx-auto mt-2 max-w-sm text-center text-base text-slate">
-              PDF, Word, PowerPoint, Excel, HTML, Markdown and text files all work.
+              Documents, spreadsheets, slides, email, ebooks, images, recordings and videos all work.
             </p>
             <fieldset className="mt-7 divide-y divide-rule overflow-hidden rounded-[var(--radius-group)] shadow-[0_0_0_0.5px_var(--color-rule-strong)]">
               <legend className="sr-only">Where the documents are</legend>

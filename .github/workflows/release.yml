@@ -40,5 +40,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Published images read every supported format.
+          build-args: |
+            INSTALL_OCR=true
+            INSTALL_LAYOUT=true
+            INSTALL_AUDIO=true
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}

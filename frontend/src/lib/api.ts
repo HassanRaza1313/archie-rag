@@ -234,6 +234,7 @@ export interface Me {
   accounts: boolean;
   role: Role | null;
   via: "account" | "key" | "open" | null;
+  key_required: boolean;
   user: { id: string; email: string; name: string } | null;
 }
 

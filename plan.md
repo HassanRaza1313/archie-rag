@@ -161,6 +161,10 @@ conversation memory was shared between chatbots that saw the same session id; de
 files and cached answers behind; nginx dropped its security headers (CSP, frame denial) on the pages themselves;
 every request scanned all chatbots to find one.
 
+**Done in the security cycle:** D1, D2, D3 (images, audio and video, CSV, JSON, email, EPUB, OpenDocument),
+D4 (every reader in published images), C2 (deleting a chatbot erases its enrichment results; the change history
+keeps a year), C5 (dependency scans in CI), plus the fixes listed in the November security audit below.
+
 **Done in phase A:** A1 (share link and website widget, chat-only and rate-limited per visitor), A3 (live model
 check in the setup assistant, with Archie's built-in search model when the usual one is missing), A4 (folder picker),
 A5 (HTTPS profile with automatic certificates), A2 (accounts: owners, editors and viewers, invitation links,
@@ -190,3 +194,24 @@ server-side sessions, an audit log). Next for A2: single sign-on (OpenID Connect
 
 Order: A1, A3, A4 with C1 and C2 first (they make Archie something a client can run and hand out), then D1 and D2,
 then B1 and B2, then E.
+
+### Security and robustness audit (November 2026)
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | With the HTTPS profile and no admin key, an install without accounts was open to the internet as owner | Without accounts or a key, only this machine and private networks get in; others see how to set up the owner |
+| 2 | Behind the HTTPS proxy the sign-in cookie was not marked Secure (nginx passed on `http`) | nginx forwards the proxy's scheme; Caddy adds HSTS |
+| 3 | The all-in-one image served pages without CSP or frame protection | The API sets the same headers nginx does |
+| 4 | Model-server errors (with internal addresses) reached anyone asking, including share-link visitors | A plain message; details stay in the trace |
+| 5 | Viewers could read a chatbot's share token and publish it | Only editors see share tokens |
+| 6 | Share and invitation tokens were written to the nginx access log | A redacting log format |
+| 7 | The change history grew forever | Kept for a year |
+| 8 | Enrichment results outlived a deleted chatbot | Stored per chatbot and erased with it |
+| 9 | One hostile or huge file could exhaust the host's memory | The worker container has a memory ceiling (`RAG_WORKER_MEMORY`) |
+| 10 | Uploading a file with an existing name silently replaced it | Kept as "name 2.pdf", as the Finder does |
+| 11 | Python 3.10 reached end of life, and the patched filelock and Pillow no longer support it | Python 3.11+; filelock 4.2.9, Pillow 13 |
+| 12 | No dependency scanning | pip-audit and npm audit in CI, plus header and log-redaction smoke tests of the images |
+
+Still open: database calls run on the API's event loop (a long write can stall requests; part of B1), the rate
+limits live in one process (B2), single sign-on, and prompt-injection screening for untrusted sources (C4, before
+connectors).

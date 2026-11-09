@@ -206,9 +206,10 @@ async def test_provider_failure_yields_error_event_and_trace(built: tuple[World,
     world, kb_id, agent = built
     world.registry.provider.fail_chat = ProviderError("model crashed")
     result = await ask(agent, kb_id, COMPOST_Q)
-    assert result["final"] == {"type": "error", "message": "model crashed", "trace_id": result["final"]["trace_id"]}
-    trace = trace_of(world, result)
+    assert result["final"]["type"] == "error" and "model crashed" not in result["final"]["message"]
+    trace = trace_of(world, result)  # the details stay in the trace, for editors
     assert trace["outcome"] == "error" and trace["data"]["error"]["stage"] == "generate"
+    assert trace["data"]["error"]["message"] == "model crashed"
 
 
 async def test_unbuilt_and_unknown_kb(world_factory: Any, settings: Any, registry: FakeRegistry, corpus: Path) -> None:

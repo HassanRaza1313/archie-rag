@@ -12,8 +12,8 @@
 | Docker + bundled Ollama | `rag up --with-ollama` (`--gpu` for NVIDIA) | Machines without Ollama | Docker (+ NVIDIA toolkit) |
 | Prebuilt images | `rag up --release` | Servers, pinned versions | Docker; `RAG_IMAGE_OWNER` in `.env` |
 | **All-in-one container** | see §4 | Quickest try-out | Docker |
-| **Local development** | `rag dev` | Changing the code (hot reload) | Python 3.10+ (or uv), Node 22.12+ |
-| Local, no Docker | `rag run` | Machines where Docker is not allowed | Python 3.10+, Node 22.12+ |
+| **Local development** | `rag dev` | Changing the code (hot reload) | Python 3.11+ (or uv), Node 22.12+ |
+| Local, no Docker | `rag run` | Machines where Docker is not allowed | Python 3.11+, Node 22.12+ |
 
 Model servers are never inside the app image. Use Ollama on the host (best on macOS, where Docker has no GPU),
 the optional Ollama container, or any OpenAI-compatible server (LM Studio, vLLM, llama.cpp, OpenAI). Every
@@ -141,8 +141,16 @@ owner-level key for scripts and monitoring, and must be supplied to create the f
 ### Optional readers
 | Extra | Adds | Install locally |
 |---|---|---|
-| `ocr` | RapidOCR for scanned PDF pages in the fast reader | `pip install -e 'backend[ocr]'` |
+| `ocr` | RapidOCR for scanned PDF pages and for images (PNG, JPEG, TIFF, WebP, BMP) | `pip install -e 'backend[ocr]'` |
 | `layout` | Docling layout reader: text columns, borderless tables, scans, Word, PowerPoint, Excel | `pip install -e 'backend[layout]'` |
+| `audio` | faster-whisper: MP3, WAV, M4A, OGG, FLAC and the sound of MP4, MOV, WebM, MKV, transcribed on this machine | `pip install -e 'backend[audio]'` |
+
+CSV and TSV, JSON, email (`.eml`), EPUB and OpenDocument (`.odt`, `.ods`, `.odp`) need nothing extra. Docker
+images include every reader by default (`RAG_INSTALL_OCR`, `RAG_INSTALL_LAYOUT`, `RAG_INSTALL_AUDIO`).
+Transcripts get a timestamp heading every two minutes, so a cited passage says where to listen; the speech model
+(Parsing → Speech model, default `small`) downloads on first use, and each recording may take up to
+`RAG_TRANSCRIBE_TIMEOUT_S` (4 hours). Email attachments are listed, not read; `.msg` (Outlook) and RTF are not
+supported yet.
 
 Without `layout`, Office files are skipped (validation says so) and complex PDFs use the fast reader with a
 warning. With it, `reader: auto` sends only the files that need it to Docling, so simple PDFs stay fast.
@@ -196,7 +204,7 @@ gets less unrelated text. Enrichment is not in this table: it needs a chat model
 
 | Path | Status |
 |---|---|
-| Backend: lint, format, strict-ish mypy, 156 tests (95 % line coverage) incl. embedded Qdrant, agent scenarios, API, CLI | Verified on Windows / Python 3.10 |
+| Backend: lint, format, strict-ish mypy, 156 tests (95 % line coverage) incl. embedded Qdrant, agent scenarios, API, CLI | Verified on Windows / Python 3.12 |
 | Frontend: Biome, strict TypeScript, 17 tests, production build | Verified (Node 22.15) |
 | Full UI flow in a browser (create → build → ask → trace → setup → activity → health → evaluate; desktop + phone, light + dark) | Verified against the real API with deterministic fake models |
 | Real FastEmbed rerankers (MiniLM, bge) | Verified, benchmarked |

@@ -1,5 +1,21 @@
 # Rendered by the nginx image's envsubst step; ${RAG_API_UPSTREAM} points at the API container.
+
+# HTTPS ends at the proxy in front (Caddy); pass its scheme on so the API marks sign-in cookies Secure.
+map $http_x_forwarded_proto $forwarded_proto {
+    default $http_x_forwarded_proto;
+    "" $scheme;
+}
+
+# Share links and invitations carry their credential in the path: keep it out of the access log.
+map $request_uri $loggable_uri {
+    ~^(?<head>/(?:api/(?:auth/)?)?(?:share|invite)/)[^/?]+(?<tail>.*)$ $head[token]$tail;
+    default $request_uri;
+}
+log_format redacted '$remote_addr [$time_local] "$request_method $loggable_uri $server_protocol" $status '
+                    '$body_bytes_sent "$http_user_agent"';
+
 server {
+    access_log /var/log/nginx/access.log redacted;
     listen 8080;
     server_name _;
     root /usr/share/nginx/html;
@@ -31,7 +47,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
         proxy_buffering off;
         proxy_cache off;
         proxy_read_timeout 600s;

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -39,8 +39,13 @@ def stage(title: str, summary: str, *, rebuild: bool = False) -> ConfigDict:
     return ConfigDict(extra="forbid", title=title, json_schema_extra={"summary": summary, "rebuild": rebuild})
 
 
-FileType = Literal[".pdf", ".md", ".txt", ".html", ".docx", ".pptx", ".xlsx"]
-FILE_TYPES: tuple[FileType, ...] = (".pdf", ".md", ".txt", ".html", ".docx", ".pptx", ".xlsx")
+FileType = Literal[
+    ".pdf", ".md", ".txt", ".html", ".docx", ".pptx", ".xlsx",
+    ".csv", ".tsv", ".json", ".eml", ".epub", ".odt", ".ods", ".odp",
+    ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp", ".bmp",
+    ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".mp4", ".mov", ".webm", ".mkv",
+]  # fmt: skip
+FILE_TYPES: tuple[FileType, ...] = get_args(FileType)
 
 
 class SourceConfig(BaseModel):
@@ -74,6 +79,13 @@ class ParsingConfig(BaseModel):
     tables: Literal["markdown", "off"] = option("markdown", "Tables", "Keep tables as markdown tables, or drop them.")
     strip_headers_footers: bool = option(
         True, "Remove page headers/footers", "Drop running headers, footers and page numbers.", tier="advanced"
+    )
+    speech_model: Literal["tiny", "base", "small", "medium", "large-v3"] = option(
+        "small",
+        "Speech model",
+        "For audio and video, transcribed on this machine: larger models hear better and take longer. "
+        "Needs the 'audio' extra.",
+        tier="advanced",
     )
 
 

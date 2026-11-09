@@ -9,7 +9,9 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
   its essential settings with one-line help; advanced settings are one click away; three presets cover most needs.
 - **Bounded agent.** Condenses follow-ups, retries weak retrievals with a rewritten or broader search, abstains with
   the closest passages instead of guessing, and checks that answers cite real sources.
-- **Reads what you actually have.** PDF, Word, PowerPoint, Excel, HTML, Markdown and text. A fast text reader
+- **Reads what you actually have.** PDF, Word, PowerPoint, Excel, CSV, JSON, email, EPUB, OpenDocument, HTML,
+  Markdown and text; images through OCR; audio and video transcribed on your own machine, cited by timestamp.
+  A fast text reader
   handles simple files; complex ones (text columns, borderless tables, scans, Office files) go to an optional
   layout reader (Docling's layout and table-structure models). Each document is split by its shape: by headings,
   per section for FAQs and clauses, per slide, by table rows, or without the references list for papers.
