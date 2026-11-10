@@ -43,6 +43,7 @@ server {
 
     # Streams (chat tokens, build progress) must not be buffered.
     location /api/ {
+        # shortcut: the name resolves once at start, to every API replica; restart ui after changing RAG_API_REPLICAS.
         proxy_pass ${RAG_API_UPSTREAM};
         proxy_http_version 1.1;
         proxy_set_header Host $host;

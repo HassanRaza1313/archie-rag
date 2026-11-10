@@ -1,4 +1,4 @@
-"""Shared chatbots, the folder picker and the setup model check."""
+"""Shared chatbots and their limits, the folder picker and the setup model check."""
 
 from __future__ import annotations
 
@@ -6,8 +6,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from ragkit.api import RateLimiter, create_app
+from ragkit.api import create_app
 from ragkit.settings import Settings
+from ragkit.storage import Database
 from tests.conftest import FakeRegistry
 from tests.test_api import COMPOST_Q, build, create_kb, sse_events
 
@@ -50,13 +51,26 @@ def test_shared_chat_is_rate_limited(settings: Settings, registry: FakeRegistry,
         assert blocked.status_code == 429 and blocked.headers["retry-after"] == "60"
 
 
-def test_rate_limiter_window_and_memory_bound() -> None:
-    limiter = RateLimiter(per_minute=2, max_keys=2)
-    assert limiter.allow("a", 0) and limiter.allow("a", 1) and not limiter.allow("a", 2)
-    assert limiter.allow("a", 60.5)  # the first hit left the window
-    limiter.allow("b", 61)
-    limiter.allow("c", 61)
-    assert "a" not in limiter._hits and len(limiter._hits) == 2
+def test_rate_limits_are_shared_between_processes(tmp_path: Path) -> None:
+    first, second = Database(tmp_path / "state.db"), Database(tmp_path / "state.db")  # two API processes
+    assert first.rate_allow("a", 2, 60, now=0) and second.rate_allow("a", 2, 60, now=1)
+    assert not first.rate_allow("a", 2, 60, now=2) and not second.rate_allow("a", 2, 60, now=2)
+    assert second.rate_allow("a", 2, 60, now=60.5)  # the first hit left the window
+    first.purge_ephemeral(turns_before=0, hits_before=1000)
+    assert first._one("SELECT COUNT(*) AS n FROM rate_hits")["n"] == 0  # type: ignore[index]
+
+
+def test_shared_chatbots_have_a_daily_ceiling(settings: Settings, registry: FakeRegistry, corpus: Path) -> None:
+    capped = settings.model_copy(update={"share_questions_per_day": 2})
+    app = create_app(capped, providers=registry)  # type: ignore[arg-type]
+    with TestClient(app, client=("8.8.4.4", 1)) as one:
+        kb = create_kb(TestClient(app), corpus)
+        token = TestClient(app).post(f"/api/kbs/{kb['id']}/share", json={"enabled": True}).json()["share_token"]
+        two = TestClient(app, client=("1.1.1.1", 1))  # another visitor
+        assert one.post(f"/api/share/{token}/chat", json={"query": "hello"}).status_code == 200
+        assert two.post(f"/api/share/{token}/chat", json={"query": "hello"}).status_code == 200
+        blocked = two.post(f"/api/share/{token}/chat", json={"query": "hello"})
+        assert blocked.status_code == 429 and "today" in blocked.json()["detail"]
 
 
 def test_folder_picker_stays_inside_data_roots(settings: Settings, registry: FakeRegistry, corpus: Path) -> None:

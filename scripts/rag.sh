@@ -161,6 +161,36 @@ passthrough() {
   else "${COMPOSE[@]}" exec api ragkit "$@"; fi
 }
 
+# The Docker stack when its API is running, otherwise the local install.
+docker_running() { have docker && [[ -n "$("${COMPOSE[@]}" ps --status running -q api 2>/dev/null)" ]]; }
+
+cmd_backup() {
+  local file="${1:-$ROOT/backups/archie-$(date +%Y%m%d-%H%M%S).tar.gz}"
+  mkdir -p "$(dirname "$file")"
+  if docker_running; then
+    "${COMPOSE[@]}" exec -T api ragkit backup /data/state/backup.tar.gz
+    "${COMPOSE[@]}" cp api:/data/state/backup.tar.gz "$file"
+    "${COMPOSE[@]}" exec -T api rm /data/state/backup.tar.gz
+  else
+    ragkit backup "$file"
+  fi
+  info "backup saved to $file"
+}
+
+cmd_restore() {
+  local file="${1:-}"
+  [[ -f "$file" ]] || fail "usage: rag restore BACKUP.tar.gz"
+  confirm "Replace every chatbot, person and history entry with the contents of $file?" || exit 0
+  if docker_running; then
+    "${COMPOSE[@]}" cp "$file" api:/data/state/restore.tar.gz
+    "${COMPOSE[@]}" stop ui api worker
+    "${COMPOSE[@]}" run --rm api sh -c "ragkit restore /data/state/restore.tar.gz; s=\$?; rm -f /data/state/restore.tar.gz; exit \$s"
+    "${COMPOSE[@]}" start api worker ui
+  else
+    ragkit restore "$file"
+  fi
+}
+
 cmd_reset() {
   confirm "Delete local state in .ragkit (chatbots, embedded vectors, traces)?" || exit 0
   rm -rf "$ROOT/.ragkit"
@@ -184,6 +214,8 @@ ragkit — build agentic RAG chatbots over your own documents
   models pull                   pull the configured models into Ollama
   kb list|build|export ...      manage chatbots headlessly (see: rag kb --help)
   eval NAME GOLDEN.jsonl        evaluate retrieval on a golden set
+  backup [FILE]                 save chatbots, people, history and uploads (default: backups/)
+  restore FILE                  replace them with a backup (asks first; missing indexes rebuild)
   reset                         delete local state (asks first)
 EOF
 }
@@ -205,6 +237,8 @@ main() {
     status) "${COMPOSE[@]}" ps ;;
     models) cmd_models "$@" ;;
     kb|eval) passthrough "$command" "$@" ;;
+    backup) cmd_backup "$@" ;;
+    restore) cmd_restore "$@" ;;
     reset) cmd_reset ;;
     help|-h|--help) usage ;;
     *) usage; exit 2 ;;

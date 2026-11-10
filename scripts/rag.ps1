@@ -171,6 +171,34 @@ function Invoke-Passthrough([string[]] $Arguments) {
   & docker @ComposeArgs exec api ragkit @Arguments
 }
 
+# The Docker stack when its API is running, otherwise the local install.
+function Test-DockerRunning {
+  if (-not (Have "docker")) { return $false }
+  return [bool](& docker @ComposeArgs ps --status running -q api 2>$null)
+}
+
+function Invoke-Backup([string] $File) {
+  if (-not $File) { $File = Join-Path $Root ("backups/archie-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".tar.gz") }
+  New-Item -ItemType Directory -Force (Split-Path -Parent $File) | Out-Null
+  if (Test-DockerRunning) {
+    & docker @ComposeArgs exec -T api ragkit backup /data/state/backup.tar.gz
+    & docker @ComposeArgs cp api:/data/state/backup.tar.gz $File
+    & docker @ComposeArgs exec -T api rm /data/state/backup.tar.gz
+  } elseif ((Invoke-Ragkit @("backup", $File)) -ne 0) { exit 1 }
+  Info "backup saved to $File"
+}
+
+function Invoke-Restore([string] $File) {
+  if (-not $File -or -not (Test-Path $File)) { Fail "usage: rag restore BACKUP.tar.gz" }
+  if (-not (Confirm "Replace every chatbot, person and history entry with the contents of ${File}?")) { return }
+  if (Test-DockerRunning) {
+    & docker @ComposeArgs cp $File api:/data/state/restore.tar.gz
+    & docker @ComposeArgs stop ui api worker
+    & docker @ComposeArgs run --rm api sh -c 'ragkit restore /data/state/restore.tar.gz; s=$?; rm -f /data/state/restore.tar.gz; exit $s'
+    & docker @ComposeArgs start api worker ui
+  } else { exit (Invoke-Ragkit @("restore", $File)) }
+}
+
 function Show-Usage {
   @"
 ragkit - build agentic RAG chatbots over your own documents
@@ -188,6 +216,8 @@ ragkit - build agentic RAG chatbots over your own documents
   models pull                   pull the configured models into Ollama
   kb list|build|export ...      manage chatbots headlessly
   eval NAME GOLDEN.jsonl        evaluate retrieval on a golden set
+  backup [FILE]                 save chatbots, people, history and uploads (default: backups\)
+  restore FILE                  replace them with a backup (asks first; missing indexes rebuild)
   reset                         delete local state (asks first)
 "@
 }
@@ -205,6 +235,8 @@ switch ($Command) {
   "status" { & docker @ComposeArgs ps }
   "models" { Invoke-Models ($Rest | Select-Object -First 1) }
   { $_ -in @("kb", "eval") } { Invoke-Passthrough (@($Command) + $Rest) }
+  "backup" { Invoke-Backup ($Rest | Select-Object -First 1) }
+  "restore" { Invoke-Restore ($Rest | Select-Object -First 1) }
   "reset" {
     if (Confirm "Delete local state in .ragkit (chatbots, embedded vectors, traces)?") {
       Remove-Item -Recurse -Force (Join-Path $Root ".ragkit") -ErrorAction SilentlyContinue

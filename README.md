@@ -28,7 +28,8 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
 - **Measured, not guessed.** Golden-set evaluation (hit@k, MRR, passage-level hits, abstain rates) per config
   version, compared side by side, plus an ingestion benchmark (`bench/`) on deliberately hard documents.
 - **Runs anywhere.** Plain local code, split Docker services, or one all-in-one container. Ollama or any
-  OpenAI-compatible model server. Embedded or server Qdrant.
+  OpenAI-compatible model server. Embedded or server Qdrant. Several API processes on one machine, and
+  `rag backup` / `rag restore` for one-file backups.
 
 ## Quick start
 
@@ -53,7 +54,7 @@ style → **Create**. Archie builds it and opens Ask. Requirements, every comman
 ## Development
 
 ```bash
-cd backend && .venv/bin/python -m pytest          # 200 tests; ruff + mypy configured in pyproject.toml
+cd backend && .venv/bin/python -m pytest          # 227 tests; ruff + mypy configured in pyproject.toml
 cd frontend && npm test && npm run lint && npm run typecheck
 ```
 

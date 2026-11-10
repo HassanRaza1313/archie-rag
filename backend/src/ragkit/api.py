@@ -16,7 +16,6 @@ import secrets
 import shutil
 import statistics
 import time
-from collections import OrderedDict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -61,7 +60,6 @@ from ragkit.formats import IMAGE_TYPES, MEDIA_TYPES
 from ragkit.index import BUILTIN_FILTER_FIELDS, VectorIndex
 from ragkit.jobs import BUILD_STAGES, Builder, is_terminal, run_worker
 from ragkit.layout import layout_available
-from ragkit.memory import SessionMemory
 from ragkit.observability import (
     UNMATCHED_ROUTE,
     Metrics,
@@ -90,31 +88,6 @@ _NOT_AUDITED = re.compile(r"POST /api/kbs/[^/]+/(chat|eval|configs/validate)|DEL
 LOCAL_EMBEDDING = ("fastembed", "BAAI/bge-small-en-v1.5")  # runs inside Archie: no model server needed
 
 
-class RateLimiter:
-    """At most ``per_minute`` hits per key in any sliding minute.
-
-    shortcut: per API process; move to Redis when running several API replicas.
-    """
-
-    def __init__(self, per_minute: int, max_keys: int = 10_000) -> None:
-        self.per_minute = per_minute
-        self.max_keys = max_keys
-        self._hits: OrderedDict[str, deque[float]] = OrderedDict()
-
-    def allow(self, key: str, now: float | None = None) -> bool:
-        now = time.monotonic() if now is None else now
-        hits = self._hits.setdefault(key, deque())
-        self._hits.move_to_end(key)
-        while hits and now - hits[0] >= 60:
-            hits.popleft()
-        if len(hits) >= self.per_minute:
-            return False
-        hits.append(now)
-        while len(self._hits) > self.max_keys:
-            self._hits.popitem(last=False)
-        return True
-
-
 @dataclass
 class AppContext:
     settings: Settings
@@ -123,10 +96,7 @@ class AppContext:
     providers: ProviderRegistry
     agent: Agent
     builder: Builder
-    memory: SessionMemory
     metrics: Metrics
-    limiter: RateLimiter
-    sign_in_limiter: RateLimiter
     worker_task: asyncio.Task[None] | None = None
     worker_stop: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -213,18 +183,14 @@ def create_app(
         db = Database(settings.db_path)
         index = VectorIndex(settings)
         registry = providers or ProviderRegistry(settings)
-        memory = SessionMemory()
         metrics = Metrics(db, settings.qdrant_mode)
         context = AppContext(
             settings=settings,
             db=db,
             index=index,
             providers=registry,
-            memory=memory,
             metrics=metrics,
-            limiter=RateLimiter(settings.share_rate_per_minute),
-            sign_in_limiter=RateLimiter(10),
-            agent=Agent(db, index, registry, AnswerCache(db), memory, observer=metrics.observe_trace),
+            agent=Agent(db, index, registry, AnswerCache(db), observer=metrics.observe_trace),
             builder=Builder(db, index, registry, settings),
         )
         if in_process_worker:
@@ -264,7 +230,7 @@ def create_app(
             and path != "/api/system/health"
             and not path.startswith(("/api/share/", "/api/auth/"))  # a share token or sign-in is the credential
         )
-        identity = identify(context, request) if context else None
+        identity = await asyncio.to_thread(identify, context, request) if context else None
         request.state.identity = identity
         if guarded:
             if identity is None:
@@ -282,7 +248,7 @@ def create_app(
             route = getattr(request.scope.get("route"), "path", path)
             params = request.scope.get("path_params", {})
             target = params.get("kb_id") or params.get("user_id") or params.get("job_id")
-            context.db.audit(identity.name, f"{method} {route}", target, response.status_code)
+            await asyncio.to_thread(context.db.audit, identity.name, f"{method} {route}", target, response.status_code)
         return response
 
     # Outermost middleware (added last): correlation id, access log and HTTP metrics for every request, 401s included.
@@ -424,11 +390,12 @@ def create_app(
     @app.post("/api/auth/sign-in")
     async def sign_in_route(body: SignInBody, request: Request, response: Response, context: Ctx) -> dict[str, Any]:
         visitor = request.client.host if request.client else "unknown"
-        if not context.sign_in_limiter.allow(visitor):
+        if not await asyncio.to_thread(context.db.rate_allow, f"sign-in:{visitor}", 10, 60):
             raise HTTPException(429, "Too many attempts. Try again in a minute.", headers={"Retry-After": "60"})
         email = body.email.strip().lower()
         user = context.db.user_login(email)
-        if not check_password(body.password, user["password_hash"] if user else _DUMMY_HASH) or user is None:
+        stored = user["password_hash"] if user else _DUMMY_HASH
+        if not await asyncio.to_thread(check_password, body.password, stored) or user is None:  # scrypt is slow
             context.db.audit(email, "sign-in failed", None, 401)
             raise HTTPException(401, "Wrong email or password.")
         sign_in(context, request, response, user["id"])
@@ -891,7 +858,7 @@ def create_app(
 
     @app.delete("/api/kbs/{kb_id}/sessions/{session_id}", status_code=204)
     async def clear_session(kb_id: str, session_id: str, context: Ctx) -> None:
-        context.memory.clear(f"{kb_id}:{session_id}")
+        context.db.clear_turns(f"{kb_id}:{session_id}")
 
     # Shared chatbots: anyone with the link may ask questions, and nothing else
 
@@ -914,13 +881,18 @@ def create_app(
     async def shared_chat(token: str, body: ChatBody, request: Request, context: Ctx) -> StreamingResponse:
         kb = shared(context, token)
         visitor = request.client.host if request.client else "unknown"
-        if not context.limiter.allow(f"{token}:{visitor}"):
+        allow = context.db.rate_allow
+        if not await asyncio.to_thread(allow, f"share:{token}:{visitor}", settings.share_rate_per_minute, 60):
             raise HTTPException(429, "Too many questions. Try again in a minute.", headers={"Retry-After": "60"})
+        # A ceiling across all visitors, so a script rotating addresses can't run up the model bill.
+        if not await asyncio.to_thread(allow, f"share-day:{kb['id']}", settings.share_questions_per_day, 86400):
+            detail = "This chatbot has answered all the questions it can today. Try again tomorrow."
+            raise HTTPException(429, detail, headers={"Retry-After": "3600"})
         return answer(context, kb["id"], body)
 
     @app.delete("/api/share/{token}/sessions/{session_id}", status_code=204)
     async def shared_clear_session(token: str, session_id: str, context: Ctx) -> None:
-        context.memory.clear(f"{shared(context, token)['id']}:{session_id}")
+        context.db.clear_turns(f"{shared(context, token)['id']}:{session_id}")
 
     # Telemetry and evaluation
 

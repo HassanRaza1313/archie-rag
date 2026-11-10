@@ -161,6 +161,11 @@ conversation memory was shared between chatbots that saw the same session id; de
 files and cached answers behind; nginx dropped its security headers (CSP, frame denial) on the pages themselves;
 every request scanned all chatbots to find one.
 
+**Done in the scale cycle:** B1 for one machine (conversation memory and rate limits in the database, so several
+API processes serve together: `RAG_API_REPLICAS`; database work, cache lookups and password checks off the event
+loop), B2 (shared per-visitor limits plus a daily ceiling per shared chatbot), B4 (`rag backup` and `rag restore`;
+missing indexes rebuild). Next for B1: Postgres for several machines; B3 load test.
+
 **Done in the security cycle:** D1, D2, D3 (images, audio and video, CSV, JSON, email, EPUB, OpenDocument),
 D4 (every reader in published images), C2 (deleting a chatbot erases its enrichment results; the change history
 keeps a year), C5 (dependency scans in CI), plus the fixes listed in the November security audit below.
@@ -212,6 +217,5 @@ then B1 and B2, then E.
 | 11 | Python 3.10 reached end of life, and the patched filelock and Pillow no longer support it | Python 3.11+; filelock 4.2.9, Pillow 13 |
 | 12 | No dependency scanning | pip-audit and npm audit in CI, plus header and log-redaction smoke tests of the images |
 
-Still open: database calls run on the API's event loop (a long write can stall requests; part of B1), the rate
-limits live in one process (B2), single sign-on, and prompt-injection screening for untrusted sources (C4, before
-connectors).
+Still open: Postgres for several machines (B1), single sign-on, and prompt-injection screening for untrusted
+sources (C4, before connectors).

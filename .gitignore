@@ -40,3 +40,6 @@ docs/spec/
 
 # Benchmark build state (results.json is committed)
 bench/.state/
+
+# Backups hold people, questions and documents
+/backups/

@@ -36,7 +36,7 @@ from ragkit.privacy import Redactor
 from ragkit.providers import ProviderRegistry
 from ragkit.settings import Settings
 from ragkit.sources import DocumentRef, SourceError, discover
-from ragkit.storage import TERMINAL_JOB_STATES, Database
+from ragkit.storage import MEMORY_TTL_S, RATE_WINDOW_MAX_S, TERMINAL_JOB_STATES, Database
 from ragkit.telemetry import request_id_var
 from ragkit.textutil import bm25_document_vector, bm25_query_vector
 
@@ -602,6 +602,7 @@ def purge_traces(db: Database) -> None:
         _, config = db.get_config(kb["id"])
         db.purge_traces(kb["id"], time.time() - config.telemetry.retention_days * 86400)
     db.purge_audit(time.time() - AUDIT_RETENTION_DAYS * 86400)
+    db.purge_ephemeral(time.time() - MEMORY_TTL_S, time.time() - RATE_WINDOW_MAX_S)
 
 
 def is_terminal(status: str) -> bool:

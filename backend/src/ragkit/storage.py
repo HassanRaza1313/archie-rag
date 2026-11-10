@@ -1,7 +1,8 @@
 """SQLite persistence for app state: knowledge bases, config versions, jobs, indexed documents, traces, cache,
 people, sessions and the audit log.
 
-One connection per ``Database`` guarded by a lock; WAL mode lets the API and the worker share the file.
+One connection per ``Database`` guarded by a lock; WAL mode lets API processes and the worker share the file, and
+conversation memory and rate limits live here too, so several API processes behind one proxy agree.
 shortcut: single-node SQLite; move to Postgres behind this same interface for multi-node deployments.
 """
 
@@ -150,11 +151,27 @@ CREATE TABLE IF NOT EXISTS audit_log (
     target TEXT,
     status INTEGER NOT NULL
 );
+-- Shared by every API process: conversation memory and rate-limit hits.
+CREATE TABLE IF NOT EXISTS conversation_turns (
+    session_key TEXT NOT NULL,
+    at REAL NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS turns_session ON conversation_turns(session_key, at);
+CREATE TABLE IF NOT EXISTS rate_hits (
+    key TEXT NOT NULL,
+    at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS rate_key ON rate_hits(key, at);
 """
 
 USER_FIELDS = "id, email, name, role, disabled, created_at, password_hash IS NOT NULL AS joined, invite_expires"
 
 TERMINAL_JOB_STATES = ("completed", "completed_with_errors", "failed", "cancelled")
+MEMORY_TTL_S = 12 * 3600  # a conversation forgets turns older than this
+MEMORY_TURNS_KEPT = 50
+RATE_WINDOW_MAX_S = 86400  # the longest rate-limit window (the daily share cap)
 
 
 class Database:
@@ -253,6 +270,8 @@ class Database:
             # Cached answers quote the documents, so they go with the chatbot.
             conn.execute("DELETE FROM answer_cache WHERE scope LIKE ?", (f"{kb_id}:%",))
             conn.execute("DELETE FROM enrichment_cache WHERE kb_id = ?", (kb_id,))  # written from its documents
+            prefix = f"{kb_id}:"
+            conn.execute("DELETE FROM conversation_turns WHERE substr(session_key, 1, ?) = ?", (len(prefix), prefix))
 
     def add_config_version(self, kb_id: str, config: KnowledgeBaseConfig) -> int:
         with self.transaction() as conn:
@@ -300,6 +319,14 @@ class Database:
             )
         previous = row["active_collection"] if row else None
         return previous if previous != collection else None
+
+    def clear_index(self, kb_id: str) -> None:
+        """Forget a chatbot's index (after a restore onto a vector store that lacks it)."""
+        self._run(
+            "UPDATE knowledge_bases SET built_version = NULL, built_index_hash = NULL, active_collection = NULL "
+            "WHERE id = ?",
+            (kb_id,),
+        )
 
     # Jobs
 
@@ -699,6 +726,47 @@ class Database:
 
     def audit_log(self, limit: int, offset: int = 0) -> list[dict[str, Any]]:
         return self._all("SELECT * FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset))
+
+    # Conversation memory and rate limits (in the database, so every API process shares them)
+
+    def turns(self, session_key: str, limit: int, since: float) -> list[tuple[str, str]]:
+        rows = self._all(
+            "SELECT question, answer FROM conversation_turns WHERE session_key = ? AND at >= ? "
+            "ORDER BY at DESC, rowid DESC LIMIT ?",
+            (session_key, since, limit),
+        )
+        return [(row["question"], row["answer"]) for row in reversed(rows)]
+
+    def add_turn(self, session_key: str, question: str, answer: str, keep: int) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO conversation_turns VALUES (?, ?, ?, ?)", (session_key, time.time(), question, answer)
+            )
+            conn.execute(
+                "DELETE FROM conversation_turns WHERE session_key = ? AND rowid NOT IN (SELECT rowid FROM "
+                "conversation_turns WHERE session_key = ? ORDER BY at DESC, rowid DESC LIMIT ?)",
+                (session_key, session_key, keep),
+            )
+
+    def clear_turns(self, session_key: str) -> None:
+        self._run("DELETE FROM conversation_turns WHERE session_key = ?", (session_key,))
+
+    def rate_allow(self, key: str, limit: int, window_s: float, now: float | None = None) -> bool:
+        """At most ``limit`` hits per ``key`` in any sliding window; one transaction, so processes can't race."""
+        now = time.time() if now is None else now
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM rate_hits WHERE key = ? AND at <= ?", (key, now - window_s))
+            if conn.execute("SELECT COUNT(*) FROM rate_hits WHERE key = ?", (key,)).fetchone()[0] >= limit:
+                return False
+            conn.execute("INSERT INTO rate_hits VALUES (?, ?)", (key, now))
+        return True
+
+    def purge_ephemeral(self, turns_before: float, hits_before: float) -> None:
+        """Expired memory, rate-limit hits of idle visitors and expired sign-in sessions."""
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM conversation_turns WHERE at < ?", (turns_before,))
+            conn.execute("DELETE FROM rate_hits WHERE at < ?", (hits_before,))
+            conn.execute("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
 
 
 class JobConflictError(Exception):

@@ -54,6 +54,8 @@ Default models: chat `qwen3.5:9b`, embeddings `nomic-embed-text` (both via Ollam
 | `models pull` | Pulls `RAG_PULL_MODELS` with host Ollama, or with the Ollama container if Ollama isn't installed |
 | `kb list`, `kb build NAME --config kb.yaml [--preset P]`, `kb export NAME` | Headless chatbot management (CI, servers) |
 | `eval NAME golden.jsonl [--version V]` | Retrieval evaluation from the terminal |
+| `backup [FILE]` | Saves chatbots, settings history, people, the change history, passage edits and uploads to one file (default `backups/`), while Archie runs |
+| `restore FILE` | Replaces all of that with a backup (after confirmation; the Docker stack is stopped and restarted). Indexes the vector store no longer has are rebuilt |
 | `reset` | Deletes local state in `.ragkit` (after confirmation) |
 
 Headless example (`kb.yaml` is merged over the preset):
@@ -119,8 +121,22 @@ non-root user, health checks, `depends_on: service_healthy`, ONNX reranker (no P
 
 People with the link can only ask that one chatbot questions (`/api/share/<token>/…`); settings, documents, other
 chatbots and the activity log still need the admin key. Each visitor may ask `RAG_SHARE_RATE_PER_MINUTE` questions
-a minute (default 20). **Reset Link** in the Share sheet stops the old link and every embed at once. Shared pages may
+a minute (default 20), and one shared chatbot answers at most `RAG_SHARE_QUESTIONS_PER_DAY` questions a day across
+all visitors (default 1000), a ceiling on the model bill. **Reset Link** in the Share sheet stops the old link and every embed at once. Shared pages may
 be framed by any site; every other page refuses framing.
+
+### More chats at once
+Set `RAG_API_REPLICAS` (say 3) and make `RAG_API_PORT` a range (`8000-8002`), then `rag up`. Each API process
+serves chats on its own CPU core; conversation memory and rate limits live in the database, so the processes agree,
+and the `ui` proxy spreads requests over them (restart `ui` after changing the count). With the `observability`
+profile, Prometheus scrapes each one. This scales one machine; several machines need a shared database (planned:
+Postgres).
+
+### Backups
+`rag backup` writes one `.tar.gz` while Archie keeps running; schedule it with cron or Task Scheduler and copy the
+files off the machine. The file holds people, questions and documents: store it like the data itself. Vectors are
+left out, since they are rebuilt from the documents (passage enrichment is in the backup, so a rebuild repeats no
+model calls for it). Source folders are yours to back up; uploaded files are included.
 
 ### People and sign-in
 A fresh install is open to whoever can reach it (it listens on 127.0.0.1 only). To require sign-in, open **People**

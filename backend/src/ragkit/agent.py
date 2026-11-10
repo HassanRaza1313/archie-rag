@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -23,11 +24,10 @@ from typing import Any
 from ragkit.cache import AnswerCache, scope_key
 from ragkit.config import KnowledgeBaseConfig
 from ragkit.index import VectorIndex
-from ragkit.memory import SessionMemory
 from ragkit.privacy import Redactor, redact
 from ragkit.providers import ChatOptions, ModelProvider, ProviderError, ProviderRegistry, Reranker
 from ragkit.retrieval import Candidate, RetrievalResult, deduplicate, fit_budget, retrieve
-from ragkit.storage import Database
+from ragkit.storage import MEMORY_TTL_S, MEMORY_TURNS_KEPT, Database
 from ragkit.telemetry import REQUEST_LOGGER, Trace
 from ragkit.textutil import estimate_tokens, split_sentences
 
@@ -190,22 +190,20 @@ class Agent:
         index: VectorIndex,
         providers: ProviderRegistry,
         cache: AnswerCache,
-        memory: SessionMemory,
         observer: Callable[[Trace], None] | None = None,
     ) -> None:
         self.db = db
         self.index = index
         self.providers = providers
         self.cache = cache
-        self.memory = memory
         self.observer = observer
 
     async def run(self, kb_id: str, request: ChatRequest) -> AsyncIterator[Event]:
-        kb = self.db.get_kb(kb_id)
+        kb = await asyncio.to_thread(self.db.get_kb, kb_id)
         if kb is None:
             yield {"type": "error", "message": "knowledge base not found"}
             return
-        version, config = self.db.get_config(kb_id)
+        version, config = await asyncio.to_thread(self.db.get_config, kb_id)
         trace = Trace(
             kb_id,
             version,
@@ -250,7 +248,11 @@ class Agent:
     ) -> AsyncIterator[Event]:
         llm = self.providers.get(config.generation.provider)
         session_id = f"{kb['id']}:{request.session_id}" if request.session_id else None  # one chatbot's memory only
-        history = self.memory.turns(session_id, config.cache.memory_turns) if config.cache.memory and session_id else []
+        history = (
+            await asyncio.to_thread(self.db.turns, session_id, config.cache.memory_turns, time.time() - MEMORY_TTL_S)
+            if config.cache.memory and session_id
+            else []
+        )
         question = request.query.strip()
 
         condensed = False
@@ -274,7 +276,7 @@ class Agent:
             )
             trace.outcome = "answered"
             yield {"type": "token", "text": answer}
-            self._remember(session_id, request.query, answer)
+            await self._remember(session_id, request.query, answer)
             yield {"type": "done", "outcome": "answered", "citations": [], "trace_id": trace.id}
             return
         trace.decide("searched the documents")
@@ -295,14 +297,14 @@ class Agent:
             trace.decide(f"cache bypassed: {reason}")
         if cacheable:
             with trace.span("cache") as attributes:
-                hit = self.cache.lookup(scope, question, vector, config.cache)
+                hit = await asyncio.to_thread(self.cache.lookup, scope, question, vector, config.cache)
                 attributes["hit"] = bool(hit)
             if hit:
                 trace.cache_hit, trace.outcome = True, "cache_hit"
                 trace.decide(f"cache hit ({hit.match}, similarity {hit.similarity:.2f})")
                 yield {"type": "sources", "sources": hit.citations}
                 yield {"type": "token", "text": hit.answer}
-                self._remember(session_id, request.query, hit.answer)
+                await self._remember(session_id, request.query, hit.answer)
                 yield {"type": "done", "outcome": "cache_hit", "citations": hit.citations, "trace_id": trace.id}
                 return
 
@@ -352,7 +354,7 @@ class Agent:
             answer = config.agent.abstain_message
             yield {"type": "sources", "sources": closest}
             yield {"type": "token", "text": answer}
-            self._remember(session_id, request.query, answer)
+            await self._remember(session_id, request.query, answer)
             yield {
                 "type": "done",
                 "outcome": "abstained",
@@ -422,9 +424,9 @@ class Agent:
         citations = [sources[label - 1] for label in used if 1 <= label <= len(sources)] or (
             sources if outcome == "answered" else []
         )
-        self._remember(session_id, request.query, answer)
+        await self._remember(session_id, request.query, answer)
         if cacheable and outcome == "answered" and verdict != "fail":
-            self.cache.record(scope, question, vector, answer, citations, config.cache)
+            await asyncio.to_thread(self.cache.record, scope, question, vector, answer, citations, config.cache)
         yield {
             "type": "done",
             "outcome": outcome,
@@ -529,6 +531,6 @@ class Agent:
             return "pass", f"judge: {verdict}"
         return "skipped", "judge reply was not valid JSON"
 
-    def _remember(self, session_id: str | None, question: str, answer: str) -> None:
+    async def _remember(self, session_id: str | None, question: str, answer: str) -> None:
         if session_id:
-            self.memory.add_turn(session_id, question, answer)
+            await asyncio.to_thread(self.db.add_turn, session_id, question, answer, MEMORY_TURNS_KEPT)

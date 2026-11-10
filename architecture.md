@@ -50,14 +50,14 @@ backend/src/ragkit/
   retrieval.py    fusion, rerank, relevance floor, dedup, compression, token budget
   privacy.py      validated PII detectors and consistent redaction
   cache.py        answer cache: exact + guarded paraphrase match, frequency promotion
-  memory.py       bounded session memory
+  backup.py       one-file backup and restore of the database and uploads
   agent.py        the bounded agent (state machine) that answers a chat request
   telemetry.py    request traces, one-line request logs, JSON logging
   jobs.py         build pipeline and worker loop
   evaluation.py   golden-set retrieval evaluation
   api.py          HTTP API + SSE + static UI
-  cli.py          ragkit serve | worker | kb | eval | doctor
-backend/tests/    156 tests: unit, integration (embedded Qdrant), agent scenarios, API, CLI
+  cli.py          ragkit serve | worker | kb | eval | backup | restore | doctor
+backend/tests/    227 tests: unit, integration (embedded Qdrant), agent scenarios, API, CLI
 frontend/src/     lib/ (typed API client, schema → form model), components/, features/<screen>/
 deploy/           Dockerfile (targets api, ui, aio), nginx template, compose (+ gpu, release overrides)
 scripts/          rag.sh / rag.ps1 (same commands), double-click launchers
@@ -231,8 +231,10 @@ Sources are delimited and labelled as reference data, not instructions. Redactio
 to a remote model by default (`auto`); the user's own question is not redacted before the model, only before
 logging.
 
-### 6.3 Memory (`memory.py`)
-Per session: last N turns (used for condensing) in an LRU of sessions with an idle TTL, bounded in size and count.
+### 6.3 Memory
+Per session: the last turns (used for condensing), stored in the database so every API process shares them; at most
+50 kept per session, turns older than 12 hours forgotten, expired ones purged by the worker, and erased with the
+chatbot.
 The user profile (name, preferences) is set explicitly in the UI and sent with each request; it shapes tone, never
 facts, and disables caching for that request.
 

@@ -26,6 +26,7 @@ x-api: &api
     RAG_CORS_ORIGINS: ${RAG_CORS_ORIGINS:-http://localhost:8080}
     RAG_MAX_UPLOAD_MB: ${RAG_MAX_UPLOAD_MB:-100}
     RAG_SHARE_RATE_PER_MINUTE: ${RAG_SHARE_RATE_PER_MINUTE:-20}
+    RAG_SHARE_QUESTIONS_PER_DAY: ${RAG_SHARE_QUESTIONS_PER_DAY:-1000}
     # Only the ui container (nginx) forwards to the API, and it sends a single checked address.
     RAG_TRUSTED_PROXIES: "*"
   extra_hosts:
@@ -53,6 +54,10 @@ services:
 
   api:
     <<: *api
+    # Several API processes serve more chats at once: they share memory and rate limits through the database,
+    # and the ui proxy spreads requests over them. With more than one, set RAG_API_PORT to a range (8000-8003).
+    deploy:
+      replicas: ${RAG_API_REPLICAS:-1}
     ports:
       - "${RAG_PUBLISH_HOST:-127.0.0.1}:${RAG_API_PORT:-8000}:8000"
 

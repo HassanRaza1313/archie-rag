@@ -7,7 +7,6 @@ import pytest
 
 from ragkit.cache import AnswerCache, same_meaning_markers, scope_key
 from ragkit.config import CacheConfig, KnowledgeBaseConfig
-from ragkit.memory import SessionMemory
 from ragkit.storage import Database, JobConflictError
 from tests.conftest import fake_vector
 
@@ -143,17 +142,13 @@ def test_same_meaning_markers(left: str, right: str, same: bool) -> None:
     assert same_meaning_markers(left, right) is same
 
 
-def test_memory_is_bounded_by_turns_sessions_and_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
-    memory = SessionMemory(max_sessions=2, ttl_s=60)
-    for index in range(5):
-        memory.add_turn("a", f"q{index}", f"a{index}")
-    assert memory.turns("a", 2) == [("q3", "a3"), ("q4", "a4")]
-    memory.add_turn("b", "q", "a")
-    memory.add_turn("c", "q", "a")
-    assert len(memory) == 2 and memory.turns("a", 5) == []
-    now = time.monotonic()
-    monkeypatch.setattr(time, "monotonic", lambda: now + 120)
-    assert memory.turns("b", 5) == [] and len(memory) == 0
-    memory.add_turn("d", "q", "a")
-    memory.clear("d")
-    assert memory.turns("d", 5) == []
+def test_memory_is_shared_bounded_and_erased_with_the_chatbot(tmp_path: Path) -> None:
+    db, other = Database(tmp_path / "state.db"), Database(tmp_path / "state.db")  # two API processes
+    kb_id = db.create_kb("hr", KnowledgeBaseConfig())
+    for i in range(5):
+        db.add_turn(f"{kb_id}:s", f"q{i}", f"a{i}", keep=3)
+    assert other.turns(f"{kb_id}:s", 10, since=0) == [("q2", "a2"), ("q3", "a3"), ("q4", "a4")]
+    assert other.turns(f"{kb_id}:s", 2, since=0) == [("q3", "a3"), ("q4", "a4")]
+    assert other.turns(f"{kb_id}:s", 10, since=time.time() + 1) == []  # older than the memory window
+    db.delete_kb(kb_id)
+    assert other.turns(f"{kb_id}:s", 10, since=0) == []

@@ -17,7 +17,6 @@ from ragkit.agent import (
     verify_citations,
 )
 from ragkit.cache import AnswerCache
-from ragkit.memory import SessionMemory
 from ragkit.providers import ProviderError
 from tests.conftest import FakeRegistry
 from tests.test_build import World
@@ -37,7 +36,7 @@ def world_factory(settings: Any, registry: FakeRegistry, corpus: Path) -> Any:
         kb_id = world.create(corpus, **overrides)
         job = await world.build(kb_id)
         assert job["status"] == "completed", job
-        agent = Agent(world.db, world.index, registry, AnswerCache(world.db), SessionMemory())  # type: ignore[arg-type]
+        agent = Agent(world.db, world.index, registry, AnswerCache(world.db))  # type: ignore[arg-type]
         return world, kb_id, agent
 
     return make
@@ -119,7 +118,7 @@ async def test_filtered_requests_bypass_the_cache(built: tuple[World, str, Agent
 async def test_memory_is_per_chatbot(built: tuple[World, str, Agent]) -> None:
     _, kb_id, agent = built
     await ask(agent, kb_id, COMPOST_Q, session_id="s")
-    assert agent.memory.turns(f"{kb_id}:s", 5) and not agent.memory.turns("kb_other:s", 5)
+    assert agent.db.turns(f"{kb_id}:s", 5, 0) and not agent.db.turns("kb_other:s", 5, 0)
 
 
 async def test_no_retries_when_disabled(world_factory: Any) -> None:
@@ -215,7 +214,7 @@ async def test_provider_failure_yields_error_event_and_trace(built: tuple[World,
 async def test_unbuilt_and_unknown_kb(world_factory: Any, settings: Any, registry: FakeRegistry, corpus: Path) -> None:
     world = World(settings, registry)
     kb_id = world.create(corpus)
-    agent = Agent(world.db, world.index, registry, AnswerCache(world.db), SessionMemory())  # type: ignore[arg-type]
+    agent = Agent(world.db, world.index, registry, AnswerCache(world.db))  # type: ignore[arg-type]
     result = await ask(agent, kb_id, COMPOST_Q)
     assert result["final"]["type"] == "error" and "not been built" in result["final"]["message"]
     missing = await ask(agent, "kb_missing", COMPOST_Q)

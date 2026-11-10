@@ -1,4 +1,4 @@
-"""Command line: ``ragkit serve | worker | kb | eval | doctor``.
+"""Command line: ``ragkit serve | worker | kb | eval | backup | restore | doctor``.
 
 The ``scripts/rag.*`` wrappers and the container images call this, so behaviour is identical everywhere.
 """
@@ -12,6 +12,8 @@ import json
 import shutil
 import socket
 import sys
+import tarfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +53,11 @@ def main(argv: list[str] | None = None) -> int:
     evaluate_cmd.add_argument("golden", type=Path)
     evaluate_cmd.add_argument("--version", type=int)
 
+    backup_cmd = commands.add_parser("backup", help="save chatbots, people, history and uploads to one file")
+    backup_cmd.add_argument("file", type=Path, nargs="?", help="default: <state dir>/backups/archie-<time>.tar.gz")
+    restore_cmd = commands.add_parser("restore", help="replace this install's state with a backup (stop Archie first)")
+    restore_cmd.add_argument("file", type=Path)
+
     commands.add_parser("doctor", help="check that every dependency is reachable")
 
     args = parser.parse_args(argv)
@@ -60,6 +67,10 @@ def main(argv: list[str] | None = None) -> int:
         return _worker(settings)
     if args.command == "kb":
         return asyncio.run(_kb(settings, args))
+    if args.command == "backup":
+        return _backup(settings, args.file)
+    if args.command == "restore":
+        return _restore(settings, args.file)
     if args.command == "eval":
         return asyncio.run(_eval(settings, args.name, args.golden, args.version))
     return asyncio.run(_doctor(settings))
@@ -114,6 +125,33 @@ def reload_app() -> Any:
     settings = Settings.from_env()
     configure_logging(settings.log_level, settings.log_format)
     return create_app(settings, in_process_worker=os.environ.get("RAGKIT_IN_PROCESS_WORKER") == "1")
+
+
+def _backup(settings: Settings, file: Path | None) -> int:
+    from ragkit.backup import backup
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    try:
+        target = backup(settings, file or settings.state_dir / "backups" / f"archie-{stamp}.tar.gz")
+    except OSError as exc:
+        print(f"backup failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"backup written to {target}")
+    return 0
+
+
+def _restore(settings: Settings, file: Path) -> int:
+    from ragkit.backup import restore
+
+    try:
+        rebuilding = restore(settings, file)
+    except (OSError, ValueError, tarfile.TarError) as exc:
+        print(f"restore failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"restored {file}")
+    if rebuilding:
+        print(f"rebuilding the search index of: {', '.join(rebuilding)} (starts when Archie runs)")
+    return 0
 
 
 def _worker(settings: Settings) -> int:

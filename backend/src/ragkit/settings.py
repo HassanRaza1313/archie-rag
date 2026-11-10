@@ -36,6 +36,7 @@ class Settings(BaseModel):
     max_upload_mb: int = 100
     # Questions per minute from one visitor of a shared chatbot (by client address).
     share_rate_per_minute: int = Field(20, ge=1)
+    share_questions_per_day: int = Field(1000, ge=1)  # per shared chatbot, all visitors together
     # Proxies whose X-Forwarded-For is believed, so rate limits see the visitor, not the proxy.
     trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1"])
     request_timeout_s: float = 300.0
