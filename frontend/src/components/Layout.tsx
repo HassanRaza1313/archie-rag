@@ -15,6 +15,7 @@ import {
 import { type ReactNode, useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { can, useMe } from "../features/account/auth";
+import { ModelsGroup } from "../features/models/ModelsGroup";
 import { api, getApiKey, type KnowledgeBase, setApiKey } from "../lib/api";
 import { Button, cn, Dialog, ErrorNote, Group, Input, Row, Segmented, StatusDot } from "./ui";
 
@@ -273,6 +274,7 @@ function PreferencesDialog({
           </Row>
         </Group>
         <AccountGroup />
+        <ModelsGroup />
         {me.data?.via !== "account" && (
           <Group
             title="Access key"

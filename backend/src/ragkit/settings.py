@@ -25,6 +25,7 @@ class Settings(BaseModel):
     rerank_provider: Literal["fastembed", "none"] = "fastembed"
     model_cache_dir: Path | None = None
     api_key: str | None = None
+    secret_key: str | None = None  # encrypts stored provider keys; default: generated into state_dir
     bind_host: str = "127.0.0.1"
     # Containers must bind 0.0.0.0; exposure is then controlled by published ports (127.0.0.1 by default).
     public_bind_ok: bool = False

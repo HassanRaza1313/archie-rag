@@ -17,7 +17,7 @@ def env(settings: Settings, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     monkeypatch.setenv("RAG_DATA_ROOTS", ",".join(str(p) for p in settings.data_roots))
     monkeypatch.setenv("RAG_QDRANT_MODE", "embedded")
     registry = FakeRegistry()
-    monkeypatch.setattr("ragkit.providers.ProviderRegistry", lambda _settings: registry)
+    monkeypatch.setattr("ragkit.providers.ProviderRegistry", lambda _settings, _db=None: registry)
     return settings
 
 

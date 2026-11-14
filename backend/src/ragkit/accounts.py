@@ -28,7 +28,8 @@ _VIEWER = re.compile(
     r"|DELETE /api/kbs/[^/]+/sessions/[^/]+"
     r"|GET /api/system/(health|ready|capabilities)"
 )
-_OWNER = re.compile(r"[A-Z]+ /api/(users|audit)(/.*)?|DELETE /api/kbs/[^/]+")
+# Provider keys are owner business: only owners add or remove model connections.
+_OWNER = re.compile(r"[A-Z]+ /api/(users|audit)(/.*)?|DELETE /api/kbs/[^/]+|(POST|DELETE) /api/connections(/.*)?")
 
 
 @dataclass(frozen=True)

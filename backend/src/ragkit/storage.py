@@ -151,6 +151,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
     target TEXT,
     status INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS model_connections (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL UNIQUE,
+    base_url TEXT NOT NULL,
+    api_key TEXT,  -- encrypted (connections.encrypt)
+    key_hint TEXT,
+    created_at REAL NOT NULL
+);
 -- Shared by every API process: conversation memory and rate-limit hits.
 CREATE TABLE IF NOT EXISTS conversation_turns (
     session_key TEXT NOT NULL,
@@ -726,6 +735,25 @@ class Database:
 
     def audit_log(self, limit: int, offset: int = 0) -> list[dict[str, Any]]:
         return self._all("SELECT * FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset))
+
+    # Model connections
+
+    def create_connection(self, kind: str, name: str, base_url: str, api_key: str | None, key_hint: str | None) -> str:
+        connection_id = "conn_" + uuid.uuid4().hex[:10]
+        self._run(
+            "INSERT INTO model_connections VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (connection_id, kind, name, base_url, api_key, key_hint, time.time()),
+        )
+        return connection_id
+
+    def list_connections(self) -> list[dict[str, Any]]:
+        return self._all("SELECT * FROM model_connections ORDER BY created_at")
+
+    def get_connection(self, connection_id: str) -> dict[str, Any] | None:
+        return self._one("SELECT * FROM model_connections WHERE id = ?", (connection_id,))
+
+    def delete_connection(self, connection_id: str) -> bool:
+        return self._run("DELETE FROM model_connections WHERE id = ?", (connection_id,)) > 0
 
     # Conversation memory and rate limits (in the database, so every API process shares them)
 

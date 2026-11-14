@@ -31,6 +31,10 @@ Question: {question}"""
 DEFAULT_ABSTAIN_MESSAGE = "I do not have enough information to answer this question."
 
 
+# Built-in providers (ollama, openai, fastembed) or a connection added in the app (conn_...).
+PROVIDER_ID = r"^[a-z][a-z0-9_]{1,39}$"
+
+
 def option(default: Any, label: str, help_text: str, *, tier: str = "essential", **constraints: Any) -> Any:
     return Field(default, title=label, description=help_text, json_schema_extra={"tier": tier}, **constraints)
 
@@ -125,7 +129,7 @@ class EnrichmentConfig(BaseModel):
     )
     questions: bool = option(False, "Write likely questions", "Add questions each chunk answers to its search text.")
     keywords: bool = option(False, "Write keywords", "Add search keywords and synonyms to each chunk.")
-    provider: Literal["ollama", "openai"] = option("ollama", "Provider", "Where the enrichment model runs.")
+    provider: str = option("ollama", "Provider", "Where the enrichment model runs.", pattern=PROVIDER_ID)
     model: str = option(
         "qwen3.5:9b", "Model", "Chat model for enrichment. A small fast model is usually enough.", min_length=1
     )
@@ -146,10 +150,11 @@ class EnrichmentConfig(BaseModel):
 
 class EmbeddingConfig(BaseModel):
     model_config = stage("Embedding", "The model that turns text into vectors.", rebuild=True)
-    provider: Literal["ollama", "openai", "fastembed"] = option(
+    provider: str = option(
         "ollama",
         "Provider",
-        "Ollama, any OpenAI-compatible server (LM Studio, vLLM, OpenAI), or fastembed: local ONNX models, no server.",
+        "A connection from Preferences > Models, or Archie's built-in search model (no server needed).",
+        pattern=PROVIDER_ID,
     )
     model: str = option(
         "nomic-embed-text", "Model", "Embedding model name at the provider (fastembed: e.g. BAAI/bge-small-en-v1.5)."
@@ -270,7 +275,7 @@ class AgentConfig(BaseModel):
 
 class GenerationConfig(BaseModel):
     model_config = stage("Generation", "The model that writes the answer.")
-    provider: Literal["ollama", "openai"] = option("ollama", "Provider", "Where the chat model runs.")
+    provider: str = option("ollama", "Provider", "A connection from Preferences > Models.", pattern=PROVIDER_ID)
     model: str = option("qwen3.5:9b", "Model", "Chat model name at the provider.")
     temperature: float = option(0.1, "Temperature", "Lower = more deterministic.", ge=0.0, le=2.0)
     system_prompt: str = option(

@@ -36,9 +36,9 @@ Add the extension to `SourceConfig.file_types`. Chunking, indexing and citations
 ## A model provider
 
 `backend/src/ragkit/providers.py`: implement the `ModelProvider` protocol (`embed`, streaming `chat`,
-`list_models`, `ping`, `is_remote`) and register it in `ProviderRegistry.__init__`. Add the name to the `provider`
-`Literal` in `EmbeddingConfig` and `GenerationConfig`. Most hosted and self-hosted servers already speak the
-OpenAI API, so `openai` with `RAG_OPENAI_BASE_URL` covers them without code.
+`list_models`, `ping`, `is_remote`), add a kind to `connections.KINDS` and build it in `ProviderRegistry.build`.
+People then add it in Preferences > Models. Most hosted and self-hosted servers already speak the OpenAI API, so the
+"Other server" kind covers them without code.
 
 ## A PII detector
 

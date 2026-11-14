@@ -164,9 +164,10 @@ def _worker(settings: Settings) -> int:
     from ragkit.storage import Database
 
     async def run() -> None:
-        providers = ProviderRegistry(settings)
+        db = Database(settings.db_path)
+        providers = ProviderRegistry(settings, db)
         try:
-            await run_worker(Builder(Database(settings.db_path), VectorIndex(settings), providers, settings))
+            await run_worker(Builder(db, VectorIndex(settings), providers, settings))
         finally:
             await providers.close()
 
@@ -207,7 +208,7 @@ async def _kb(settings: Settings, args: argparse.Namespace) -> int:
     job_id = db.create_job(kb_id, version, BUILD_STAGES)
     job = db.claim_job()
     assert job is not None and job["id"] == job_id
-    providers = ProviderRegistry(settings)
+    providers = ProviderRegistry(settings, db)
     try:
         status = await Builder(db, VectorIndex(settings), providers, settings).run(job)
     finally:
@@ -242,7 +243,7 @@ async def _eval(settings: Settings, name: str, golden: Path, version: int | None
     items = [
         GoldenItem.model_validate_json(line) for line in golden.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
-    providers = ProviderRegistry(settings)
+    providers = ProviderRegistry(settings, db)
     try:
         report = await evaluate(db, VectorIndex(settings), providers, kb["id"], items, version)
     finally:
@@ -256,7 +257,7 @@ async def _doctor(settings: Settings) -> int:
     from ragkit.providers import ProviderRegistry
 
     checks: list[tuple[str, bool, str]] = []
-    checks.append(("python >= 3.10", sys.version_info >= (3, 10), sys.version.split()[0]))
+    checks.append(("python >= 3.11", sys.version_info >= (3, 11), sys.version.split()[0]))
     for root in settings.data_roots:
         checks.append((f"data root {root}", Path(root).is_dir(), "create it or set RAG_DATA_ROOTS"))
     try:

@@ -28,7 +28,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
-from ragkit import __version__
+from ragkit import __version__, connections
 from ragkit.accounts import (
     INVITE_DAYS,
     ROLES,
@@ -150,6 +150,13 @@ class UserChange(BaseModel):
     disabled: bool | None = None
 
 
+class ConnectionBody(BaseModel):
+    kind: Literal["anthropic", "openai", "gemini", "ollama", "compatible"]
+    name: str = Field("", max_length=60)
+    base_url: str = Field("", max_length=300)
+    api_key: str = Field("", max_length=1000)
+
+
 class ShareBody(BaseModel):
     enabled: bool
     reset: bool = False
@@ -182,7 +189,7 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         db = Database(settings.db_path)
         index = VectorIndex(settings)
-        registry = providers or ProviderRegistry(settings)
+        registry = providers or ProviderRegistry(settings, db)
         metrics = Metrics(db, settings.qdrant_mode)
         context = AppContext(
             settings=settings,
@@ -527,7 +534,21 @@ def create_app(
             installed = await context.providers.get("ollama").list_models()
         except Exception:
             installed = []
-        return stages | {"fallback_embedding": fallback, "installed": installed}
+        extra = {"fallback_embedding": fallback, "installed": installed, "answer_options": await answers(context)}
+        return stages | extra
+
+    async def answers(context: AppContext) -> list[dict[str, str]]:
+        """Chat models of the connections added in Preferences, for 'Writing answers'."""
+        added = [c for c in await asyncio.to_thread(_connections, context) if not c["builtin"] and c["chat"]]
+
+        async def models_of(connection: dict[str, Any]) -> list[dict[str, str]]:
+            try:
+                found = await context.providers.get(connection["id"]).list_models()
+            except ProviderError:
+                return []  # an unreachable connection simply offers nothing here
+            return [{"provider": connection["id"], "name": connection["name"], "model": m} for m in found]
+
+        return [option for group in await asyncio.gather(*map(models_of, added)) for option in group]
 
     @app.get("/metrics", include_in_schema=False)
     async def metrics(request: Request, context: Ctx) -> Response:
@@ -569,8 +590,52 @@ def create_app(
         return preset_config(name).model_dump()
 
     @app.get("/api/models")
-    async def models(context: Ctx, provider: Literal["ollama", "openai", "fastembed"] = "ollama") -> dict[str, Any]:
+    async def models(context: Ctx, provider: str = "ollama") -> dict[str, Any]:
         return {"provider": provider, "models": await context.providers.get(provider).list_models()}
+
+    # Model connections: Claude, OpenAI, Gemini, Ollama or any OpenAI-compatible server
+
+    @app.get("/api/connections")
+    async def list_connections(context: Ctx) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(_connections, context)
+
+    @app.post("/api/connections", status_code=201)
+    async def add_connection(body: ConnectionBody, context: Ctx) -> dict[str, Any]:
+        info = connections.KINDS[body.kind]
+        base_url = (body.base_url.strip() or info.base_url).rstrip("/")
+        if not base_url.startswith(("http://", "https://")):
+            raise HTTPException(422, "Enter the server's address, starting with http:// or https://.")
+        key = body.api_key.strip() or None
+        if info.needs_key and not key:
+            raise HTTPException(422, f"{info.label} needs an API key.")
+        provider = context.providers.build(body.kind, base_url, key)
+        try:
+            found = await provider.list_models()  # the live test: a wrong key or address fails here
+        except ProviderError as exc:
+            raise HTTPException(422, f"Couldn't connect: {exc}") from exc
+        finally:
+            if close := getattr(provider, "close", None):
+                await close()
+        taken = {row["name"] for row in _connections(context)}
+        name = base = body.name.strip() or info.label
+        number = 2
+        while name in taken:
+            name, number = f"{base} {number}", number + 1
+        secret = connections.encrypt(context.settings, key) if key else None
+        hint = connections.masked(key) if key else None
+        connection_id = context.db.create_connection(body.kind, name, base_url, secret, hint)
+        added = next(row for row in _connections(context) if row["id"] == connection_id)
+        return {"connection": added, "models": found}
+
+    @app.delete("/api/connections/{connection_id}", status_code=204)
+    async def remove_connection(connection_id: str, context: Ctx) -> None:
+        if context.db.get_connection(connection_id) is None:
+            raise HTTPException(404, "connection not found")
+        users = [kb["name"] for kb in context.db.list_kbs() if connection_id in _providers_of(context, kb["id"])]
+        if users:
+            raise HTTPException(409, f"Used by {', '.join(users)}. Switch them to another model first.")
+        context.db.delete_connection(connection_id)
+        context.providers.forget(connection_id)
 
     # Knowledge bases and configs
 
@@ -1052,6 +1117,37 @@ def summarize_traces(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "error_rate": rate(lambda r: r["outcome"] == "error"),
         "verify_fail_rate": rate(lambda r: r["verify"] == "fail"),
     }
+
+
+def _providers_of(context: AppContext, kb_id: str) -> set[str]:
+    _, config = context.db.get_config(kb_id)
+    return {config.embedding.provider, config.generation.provider, config.enrichment.provider}
+
+
+def _connections(context: AppContext) -> list[dict[str, Any]]:
+    """Everything a chatbot can run on: the built-ins, then the connections added in the app (keys never leave)."""
+    settings = context.settings
+    rows: list[dict[str, Any]] = [
+        {"id": "fastembed", "kind": "builtin", "name": "Archie's built-in search model", "base_url": "",
+         "builtin": True, "chat": False, "embeddings": True, "key_hint": None, "readable": True},
+        {"id": "ollama", "kind": "ollama", "name": "Ollama", "base_url": settings.ollama_url,
+         "builtin": True, "chat": True, "embeddings": True, "key_hint": None, "readable": True},
+    ]  # fmt: skip
+    if settings.openai_api_key:
+        rows.append(
+            {"id": "openai", "kind": "openai", "name": "OpenAI-compatible (from settings)",
+             "base_url": settings.openai_base_url, "builtin": True, "chat": True, "embeddings": True,
+             "key_hint": connections.masked(settings.openai_api_key), "readable": True}
+        )  # fmt: skip
+    for row in context.db.list_connections():
+        info = connections.KINDS.get(row["kind"], connections.KINDS["compatible"])
+        readable = not row["api_key"] or connections.decrypt(settings, row["api_key"]) is not None
+        rows.append(
+            {"id": row["id"], "kind": row["kind"], "name": row["name"], "base_url": row["base_url"],
+             "builtin": False, "chat": info.chat, "embeddings": info.embeddings, "key_hint": row["key_hint"],
+             "readable": readable}
+        )  # fmt: skip
+    return rows
 
 
 def _sse(event: str, data: str) -> str:

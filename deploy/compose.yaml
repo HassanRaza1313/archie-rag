@@ -19,6 +19,7 @@ x-api: &api
     RAG_OLLAMA_URL: ${RAG_OLLAMA_URL:-http://host.docker.internal:11434}
     RAG_OPENAI_BASE_URL: ${RAG_OPENAI_BASE_URL:-https://api.openai.com/v1}
     RAG_OPENAI_API_KEY: ${RAG_OPENAI_API_KEY:-}
+    RAG_SECRET_KEY: ${RAG_SECRET_KEY:-}
     RAG_API_KEY: ${RAG_API_KEY:-}
     RAG_RERANK_PROVIDER: ${RAG_RERANK_PROVIDER:-fastembed}
     RAG_LOG_FORMAT: ${RAG_LOG_FORMAT:-json}

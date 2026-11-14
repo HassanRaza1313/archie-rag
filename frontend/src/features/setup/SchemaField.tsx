@@ -5,7 +5,43 @@ import { api } from "../../lib/api";
 import { humanize } from "../../lib/format";
 import type { FieldSpec } from "../../lib/schema";
 
-const MODEL_FIELDS = new Set(["embedding.model", "generation.model"]);
+const MODEL_FIELDS = new Set(["embedding.model", "generation.model", "enrichment.model"]);
+const PROVIDER_FIELDS = new Set(["embedding.provider", "generation.provider", "enrichment.provider"]);
+
+/** The connections from Preferences > Models that can do this stage's job. */
+function ProviderSelect({
+  id,
+  stage,
+  value,
+  describedBy,
+  onChange,
+}: {
+  id: string;
+  stage: string;
+  value: string;
+  describedBy: string;
+  onChange: (value: string) => void;
+}) {
+  const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections, staleTime: 60_000 });
+  const fits = (connections.data ?? []).filter((c) => (stage === "embedding" ? c.embeddings : c.chat));
+  const known = fits.some((c) => c.id === value);
+  return (
+    <Select
+      id={id}
+      value={value}
+      aria-describedby={describedBy}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full max-w-72"
+    >
+      {!known && <option value={value}>{connections.isLoading ? value : `${value} (no longer connected)`}</option>}
+      {fits.map((connection) => (
+        <option key={connection.id} value={connection.id}>
+          {connection.name}
+        </option>
+      ))}
+    </Select>
+  );
+}
 
 /** Range problem for a number field, in plain words, or null. */
 export function rangeProblem(field: FieldSpec, value: unknown): string | null {
@@ -185,7 +221,15 @@ export function SchemaField({
       );
       break;
     default:
-      control = (
+      control = PROVIDER_FIELDS.has(path) ? (
+        <ProviderSelect
+          id={id}
+          stage={field.stage}
+          value={String(value ?? "")}
+          describedBy={hintId}
+          onChange={onChange}
+        />
+      ) : (
         <>
           <Input
             id={id}

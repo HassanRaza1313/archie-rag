@@ -41,7 +41,8 @@ backend/src/ragkit/
   settings.py     infrastructure settings from RAG_* env vars and .env
   config.py       chatbot config: one model per stage, UI metadata, presets, fingerprints
   storage.py      SQLite: knowledge bases, config versions, jobs, indexed docs, traces, answer cache
-  providers.py    Ollama + OpenAI-compatible (embed, streaming chat, model list), FastEmbed reranker
+  providers.py    Ollama, OpenAI-compatible, Claude (official SDK); FastEmbed embeddings and reranker
+  connections.py  model connections added in the app; keys encrypted at rest
   sources.py      data sources (local folder, uploads) with the data-root allowlist
   parsing.py      PDF (pdfium text + pdfplumber tables + optional OCR), Markdown, text
   chunking.py     structure-aware and fixed chunking

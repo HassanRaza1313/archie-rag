@@ -125,6 +125,17 @@ a minute (default 20), and one shared chatbot answers at most `RAG_SHARE_QUESTIO
 all visitors (default 1000), a ceiling on the model bill. **Reset Link** in the Share sheet stops the old link and every embed at once. Shared pages may
 be framed by any site; every other page refuses framing.
 
+### Models
+Open **Preferences** and, under **Models**, press **Add Provider…**: Claude, OpenAI, Gemini, Ollama on another
+computer, or any server that speaks the OpenAI API (vLLM, LM Studio, llama.cpp, OpenRouter). Paste the key or the
+address; Archie lists the models it finds before saving, so a wrong key never gets saved. Each chatbot then picks
+its models in **Manage > Settings**, and the setup assistant offers them for new chatbots. Mix freely: Claude for
+answers, a local model for enrichment, Archie's built-in model for search. Claude has no search (embedding) models.
+
+Only owners add or remove providers. Keys are encrypted on the server (`RAG_SECRET_KEY`, or a key generated into
+the state folder) and never shown again. Backups leave that secret out, so after restoring onto another machine,
+add the keys again. A provider in use by a chatbot can't be removed until the chatbot uses another.
+
 ### More chats at once
 Set `RAG_API_REPLICAS` (say 3) and make `RAG_API_PORT` a range (`8000-8002`), then `rag up`. Each API process
 serves chats on its own CPU core; conversation memory and rate limits live in the database, so the processes agree,
@@ -214,6 +225,7 @@ gets less unrelated text. Enrichment is not in this table: it needs a chat model
 - Share links are random 24-character tokens that allow questions to one chatbot only, rate-limited per visitor.
   Behind the HTTPS profile, the visitor's address comes from the proxy chain (nginx believes `X-Forwarded-For` only
   from private networks). Deleting a chatbot deletes its uploads and cached answers.
+- Model provider keys added in the app are encrypted at rest and only owners can add or remove them.
 - Never commit `.env` or documents other than the sample corpus (`data/sources/*` is git-ignored).
 
 ## 7. Verification status

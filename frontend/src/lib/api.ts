@@ -363,6 +363,24 @@ export interface SetupModels {
   generation: ModelCheck;
   fallback_embedding: { provider: string; model: string } | null;
   installed: string[];
+  /** Chat models of the connections added in Preferences. */
+  answer_options: { provider: string; name: string; model: string }[];
+}
+
+export type ConnectionKind = "anthropic" | "openai" | "gemini" | "ollama" | "compatible";
+
+/** Something chatbots can run on: a built-in, or a provider connected in Preferences. Keys never come back. */
+export interface Connection {
+  id: string;
+  kind: ConnectionKind | "builtin";
+  name: string;
+  base_url: string;
+  builtin: boolean;
+  chat: boolean;
+  embeddings: boolean;
+  key_hint: string | null;
+  /** False after a restore onto another machine: the key must be entered again. */
+  readable: boolean;
 }
 
 /** Where a conversation's requests go: a chatbot (admin) or a share link (anyone with the link). */
@@ -389,6 +407,10 @@ export const api = {
   changePerson: (id: string, change: { role?: Role; disabled?: boolean }) =>
     request<Person>(`/api/users/${id}`, patch(change)),
   removePerson: (id: string) => request<void>(`/api/users/${id}`, { method: "DELETE" }),
+  connections: () => request<Connection[]>("/api/connections"),
+  addConnection: (body: { kind: ConnectionKind; name?: string; base_url?: string; api_key?: string }) =>
+    request<{ connection: Connection; models: string[] }>("/api/connections", json(body)),
+  removeConnection: (id: string) => request<void>(`/api/connections/${id}`, { method: "DELETE" }),
   audit: (limit = 100) => request<AuditEntry[]>(`/api/audit?limit=${limit}`),
   ready: () => request<{ ready: boolean; qdrant: boolean; ollama: boolean }>("/api/system/ready"),
   capabilities: () =>

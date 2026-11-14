@@ -161,6 +161,14 @@ conversation memory was shared between chatbots that saw the same session id; de
 files and cached answers behind; nginx dropped its security headers (CSP, frame denial) on the pages themselves;
 every request scanned all chatbots to find one.
 
+**Next cycle (agreed November 2026):** F1 Models pane (done: Claude through the official SDK, OpenAI, Gemini,
+Ollama and OpenAI-compatible connections added in the app with a live check and encrypted keys, a model per chatbot
+stage); F2 a short note on every setting choice (gain, cost, when it applies); F3 groups of sources per assistant
+with a question router; F4 connectors with incremental sync (Jira, Confluence, SharePoint/OneDrive, S3, Google
+Drive, read-only databases, websites) that keep their fields as structured data; F5 structured answers (filters and
+counts from fields) and an entity layer; F6 optional graph expansion. Postgres, the load test and single sign-on
+follow F4.
+
 **Done in the scale cycle:** B1 for one machine (conversation memory and rate limits in the database, so several
 API processes serve together: `RAG_API_REPLICAS`; database work, cache lookups and password checks off the event
 loop), B2 (shared per-visitor limits plus a daily ceiling per shared chatbot), B4 (`rag backup` and `rag restore`;

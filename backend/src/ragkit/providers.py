@@ -1,24 +1,31 @@
-"""Model providers: embeddings and chat (Ollama, OpenAI-compatible), local ONNX embeddings (FastEmbed), and
-cross-encoder reranking.
+"""Model providers: embeddings and chat (Ollama, OpenAI-compatible, Claude), local ONNX embeddings (FastEmbed),
+and cross-encoder reranking. Besides the built-in ``ollama``, ``openai`` and ``fastembed``, every connection added
+in the app (``conn_…``) is a provider.
 
-Add a provider by implementing ``ModelProvider`` and registering it in ``PROVIDERS``.
+Add a provider kind by implementing ``ModelProvider`` and building it in ``ProviderRegistry.build``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
-from collections.abc import AsyncIterator
+import re
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 from urllib.parse import urlparse
 
 import httpx
 
+from ragkit import connections
 from ragkit.settings import Settings
 from ragkit.telemetry import request_id_var
+
+if TYPE_CHECKING:
+    from ragkit.storage import Database
 
 EmbedKind = Literal["document", "query"]
 
@@ -208,6 +215,93 @@ class OpenAIProvider(_HttpProvider):
         return sorted(model["id"] for model in response.json().get("data", []))
 
 
+# Models that take the server-side fallback on a policy decline (the API re-runs the request on a fallback model).
+_FALLBACK_MODELS = ("claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5")
+
+
+def _supports_effort(model: str) -> bool:
+    """Effort exists from the 4.6 models on; older ones reject it."""
+    match = re.match(r"claude-[a-z]+-(\d+)(?:-(\d+))?", model)
+    if not match:
+        return True  # an alias or a new naming scheme: assume a current model
+    major, minor = int(match.group(1)), int(match.group(2) or 0)
+    return major >= 5 or (major == 4 and minor >= 6)
+
+
+@contextlib.contextmanager
+def _claude_errors(model: str) -> Iterator[None]:
+    import anthropic
+
+    try:
+        yield
+    except anthropic.AuthenticationError as exc:
+        raise ProviderError("Claude rejected the API key. Add the connection again with a valid key.") from exc
+    except anthropic.PermissionDeniedError as exc:
+        raise ProviderError("This Claude key may not use this model or feature.") from exc
+    except anthropic.NotFoundError as exc:
+        raise ProviderError(f"Claude has no model '{model}'.") from exc
+    except anthropic.RateLimitError as exc:
+        raise ProviderError("Claude is limiting requests for this key. Try again shortly.") from exc
+    except anthropic.APIStatusError as exc:
+        raise ProviderError(f"Claude returned {exc.status_code}: {str(exc.message)[:300]}") from exc
+    except anthropic.APIConnectionError as exc:
+        raise ProviderError(f"cannot reach Claude: {exc}") from exc
+
+
+class AnthropicProvider:
+    """Claude through the official SDK. Chat only: Claude has no embedding models."""
+
+    is_remote = True
+
+    def __init__(self, api_key: str, base_url: str, timeout_s: float, http_client: Any = None) -> None:
+        import anthropic
+
+        self.client = anthropic.AsyncAnthropic(
+            api_key=api_key, base_url=base_url, timeout=timeout_s, max_retries=2, http_client=http_client
+        )
+
+    async def embed(self, model: str, texts: list[str], kind: EmbedKind) -> list[list[float]]:
+        raise ProviderError("Claude has no search (embedding) models; use Archie's built-in one or another connection")
+
+    async def chat(self, messages: list[dict[str, str]], options: ChatOptions) -> AsyncIterator[str]:
+        system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+        request: dict[str, Any] = {
+            "model": options.model,
+            # Room for adaptive thinking on top of the answer; the prompt keeps answers short.
+            "max_tokens": options.max_tokens + 16000,
+            "messages": [m for m in messages if m["role"] != "system"],
+        }
+        if system:
+            request["system"] = system
+        if _supports_effort(options.model):
+            request["output_config"] = {"effort": "medium" if options.thinking else "low"}
+        if options.model in _FALLBACK_MODELS:
+            request |= {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
+        with _claude_errors(options.model):
+            async with self.client.beta.messages.stream(**request) as stream:
+                async for text in stream.text_stream:
+                    yield text
+                final = await stream.get_final_message()
+        options.usage.prompt_tokens = final.usage.input_tokens
+        options.usage.completion_tokens = final.usage.output_tokens
+        if final.stop_reason == "refusal":
+            raise ProviderError("Claude declined to answer this question.")
+
+    async def list_models(self) -> list[str]:
+        with _claude_errors(""):
+            return sorted([model.id async for model in self.client.models.list()])
+
+    async def ping(self) -> bool:
+        try:
+            await self.list_models()
+        except ProviderError:
+            return False
+        return True
+
+    async def close(self) -> None:
+        await self.client.close()
+
+
 class FastEmbedProvider:
     """Local ONNX embeddings via FastEmbed: no model server needed. Embedding only; it has no chat models."""
 
@@ -280,10 +374,11 @@ async def _forward_request_id(request: httpx.Request) -> None:
 
 
 class ProviderRegistry:
-    """Creates providers from settings and caches loaded reranker models."""
+    """Providers from settings and from the connections stored in the database; caches loaded reranker models."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, db: Database | None = None) -> None:
         self.settings = settings
+        self.db = db
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(settings.request_timeout_s, connect=10.0),
             limits=httpx.Limits(max_connections=32),
@@ -298,8 +393,25 @@ class ProviderRegistry:
 
     def get(self, name: str) -> ModelProvider:
         if name not in self._providers:
-            raise ProviderError(f"unknown provider '{name}'")
+            row = self.db.get_connection(name) if self.db else None
+            if row is None:
+                raise ProviderError(f"the model connection '{name}' no longer exists; choose another in Setup")
+            key = connections.decrypt(self.settings, row["api_key"]) if row["api_key"] else None
+            if row["api_key"] and key is None:
+                raise ProviderError(f"the key for {row['name']} can't be read here (a restored backup?); add it again")
+            self._providers[name] = self.build(row["kind"], row["base_url"], key)
         return self._providers[name]
+
+    def build(self, kind: str, base_url: str, api_key: str | None) -> ModelProvider:
+        """A provider for a connection, also used to test one before it is saved."""
+        if kind == "anthropic":
+            return AnthropicProvider(api_key or "", base_url, self.settings.request_timeout_s)
+        if kind == "ollama":
+            return OllamaProvider(self.client, base_url)
+        return OpenAIProvider(self.client, base_url, api_key)
+
+    def forget(self, name: str) -> None:
+        self._providers.pop(name, None)
 
     def reranker(self, model: str) -> Reranker | None:
         if self.settings.rerank_provider == "none":
@@ -309,4 +421,7 @@ class ProviderRegistry:
         return self._rerankers[model]
 
     async def close(self) -> None:
+        for provider in self._providers.values():
+            if isinstance(provider, AnthropicProvider):
+                await provider.close()
         await self.client.aclose()

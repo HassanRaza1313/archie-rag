@@ -3,7 +3,10 @@ import { useEffect } from "react";
 import { Button, ErrorNote, Group, Row, Select, StatusDot } from "../../components/ui";
 import { api, type SetupModels } from "../../lib/api";
 
-export type ModelChoice = { embedding?: { provider: string; model: string }; generation?: { model: string } };
+export type ModelChoice = {
+  embedding?: { provider: string; model: string };
+  generation?: { provider: string; model: string };
+};
 
 /** What a new chatbot will run on, checked live, with the one command that fixes anything missing. */
 export function ModelCheck({
@@ -29,9 +32,23 @@ export function ModelCheck({
   if (check.error || !data) return <ErrorNote error={check.error} />;
 
   const searchOk = data.embedding.ok || Boolean(data.fallback_embedding);
-  const answerModel = choice.generation?.model ?? data.generation.model;
+  const picked = data.answer_options.find(
+    (option) => option.provider === choice.generation?.provider && option.model === choice.generation?.model,
+  );
+  const answerModel = picked
+    ? `${picked.model} on ${picked.name}`
+    : (choice.generation?.model ?? data.generation.model);
   const answerOk = data.generation.ok || Boolean(choice.generation);
-  const others = data.installed.filter((model) => !model.includes("embed"));
+  // Ollama's other chat models, then the models of providers connected in Preferences > Models.
+  const options = [
+    ...(data.generation.ok
+      ? []
+      : data.installed
+          .filter((model) => !model.includes("embed"))
+          .map((model) => ({ provider: "ollama", name: "Ollama", model }))),
+    ...data.answer_options,
+  ];
+  const chosen = choice.generation ? `${choice.generation.provider}|${choice.generation.model}` : "";
 
   return (
     <Group
@@ -40,7 +57,8 @@ export function ModelCheck({
       footer={
         !(searchOk && answerOk) && (
           <span>
-            Archie uses Ollama to run models on this computer.{" "}
+            Archie can run models on this computer with Ollama, or use Claude, OpenAI, Gemini or your own server
+            (Preferences, Models).{" "}
             <a
               href="https://ollama.com/download"
               target="_blank"
@@ -71,21 +89,29 @@ export function ModelCheck({
         detail={
           answerOk
             ? `${answerModel}, ready`
-            : `Needs ${data.generation.model}: ollama pull ${data.generation.model}. You can create the chatbot now; answers start once the model is there.`
+            : options.length > 0
+              ? `Choose a model, or install ${data.generation.model} with: ollama pull ${data.generation.model}`
+              : `Needs ${data.generation.model}: ollama pull ${data.generation.model}. You can create the chatbot now; answers start once the model is there.`
         }
       >
-        {!data.generation.ok && others.length > 0 && (
+        {options.length > 0 && (
           <Select
             aria-label="Model for answers"
-            value={choice.generation?.model ?? ""}
-            onChange={(event) =>
-              onChoice({ ...choice, generation: event.target.value ? { model: event.target.value } : undefined })
-            }
-            className="w-40"
+            value={chosen}
+            onChange={(event) => {
+              const [provider = "ollama", ...model] = event.target.value.split("|");
+              onChoice({
+                ...choice,
+                generation: event.target.value ? { provider, model: model.join("|") } : undefined,
+              });
+            }}
+            className="w-56"
           >
-            <option value="">Use another…</option>
-            {others.map((model) => (
-              <option key={model}>{model}</option>
+            <option value="">{data.generation.ok ? "Use another…" : "Choose a model…"}</option>
+            {options.map((option) => (
+              <option key={`${option.provider}|${option.model}`} value={`${option.provider}|${option.model}`}>
+                {option.provider === "ollama" ? option.model : `${option.model} (${option.name})`}
+              </option>
             ))}
           </Select>
         )}

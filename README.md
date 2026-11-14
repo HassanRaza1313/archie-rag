@@ -27,9 +27,10 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
   metrics, SLOs with burn-rate alerts, and a Health page that says it in plain words.
 - **Measured, not guessed.** Golden-set evaluation (hit@k, MRR, passage-level hits, abstain rates) per config
   version, compared side by side, plus an ingestion benchmark (`bench/`) on deliberately hard documents.
-- **Runs anywhere.** Plain local code, split Docker services, or one all-in-one container. Ollama or any
-  OpenAI-compatible model server. Embedded or server Qdrant. Several API processes on one machine, and
-  `rag backup` / `rag restore` for one-file backups.
+- **Runs on your choice of models.** Claude, OpenAI, Gemini, Ollama or any OpenAI-compatible server, added in
+  Preferences with a live check; each chatbot picks its own, and switching is one click.
+- **Runs anywhere.** Plain local code, split Docker services, or one all-in-one container. Embedded or server
+  Qdrant. Several API processes on one machine, and `rag backup` / `rag restore` for one-file backups.
 
 ## Quick start
 
