@@ -111,6 +111,7 @@ export function SchemaField({
   provider,
   error,
   changed,
+  note,
   onChange,
 }: {
   field: FieldSpec;
@@ -118,6 +119,8 @@ export function SchemaField({
   provider?: string;
   error?: string | null;
   changed: boolean;
+  /** What this edit does, shown while the setting differs from the saved version. */
+  note?: string | null;
   onChange: (value: unknown) => void;
 }) {
   const id = useId();
@@ -272,6 +275,14 @@ export function SchemaField({
           </p>
         )}
       </div>
+      {!error && changed && note && (
+        <p
+          aria-live="polite"
+          className="rounded-[var(--radius-control)] bg-accent-soft px-3 py-2 text-sm text-ink md:col-span-2"
+        >
+          {note}
+        </p>
+      )}
     </div>
   );
 }

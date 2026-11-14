@@ -12,7 +12,16 @@ import { fileCount } from "../features/new/FolderPicker";
 import { rangeProblem } from "../features/setup/SchemaField";
 import { type JsonSchema, type KbStatus, type KnowledgeBase, parseSseBlock, readSse } from "./api";
 import { formatMs, formatPercent, pages, relativeTime } from "./format";
-import { applyPreset, buildStages, changedFields, groupStages, plainError, primaryAction, setField } from "./schema";
+import {
+  applyPreset,
+  buildStages,
+  changedFields,
+  changeNote,
+  groupStages,
+  plainError,
+  primaryAction,
+  setField,
+} from "./schema";
 
 const schema: JsonSchema = {
   properties: {
@@ -370,5 +379,24 @@ describe("accounts", () => {
     const entry = { id: 1, at: 0, actor: "ada@x.io", target: "kb_1", status: 202 };
     expect(describeAction({ ...entry, action: "POST /api/kbs/{kb_id}/builds" })).toBe("started a build");
     expect(describeAction({ ...entry, action: "signed in" })).toBe("signed in");
+  });
+});
+
+describe("changeNote", () => {
+  const notes = {
+    "fusion.method": { rrf: "Merges by rank.", dbsf: "Blends scores." },
+    "rerank.enabled": { true: "Reranks.", false: "Faster." },
+    "chunking.chunk_size": { up: "More context.", down: "More precise." },
+    "generation.model": { "*": "Larger is better." },
+  };
+  it("picks the note for the new value and says when it applies", () => {
+    expect(changeNote(notes, "fusion.method", "dbsf", "rrf", false)).toBe(
+      "Blends scores. Applies to the next question.",
+    );
+    expect(changeNote(notes, "rerank.enabled", false, true, false)).toBe("Faster. Applies to the next question.");
+    expect(changeNote(notes, "chunking.chunk_size", 300, 512, true)).toBe("More precise. Needs a rebuild.");
+    expect(changeNote(notes, "chunking.chunk_size", 900, 512, true)).toBe("More context. Needs a rebuild.");
+    expect(changeNote(notes, "generation.model", "qwen3.5:32b", "qwen3.5:9b", false)).toContain("Larger");
+    expect(changeNote(notes, "context.dedup", true, false, false)).toBeNull();
   });
 });

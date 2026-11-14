@@ -6,7 +6,8 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
 
 - **Configurable pipeline, explained.** Source → parsing → chunking → embedding → index → hybrid retrieval → fusion
   (RRF/DBSF) → reranking → context → agent → generation → cache & memory → privacy → telemetry. Each stage shows
-  its essential settings with one-line help; advanced settings are one click away; three presets cover most needs.
+  its essential settings with one-line help; changing one shows what you gain, what it costs and when it applies;
+  advanced settings are one click away; three presets cover most needs.
 - **Bounded agent.** Condenses follow-ups, retries weak retrievals with a rewritten or broader search, abstains with
   the closest passages instead of guessing, and checks that answers cite real sources.
 - **Reads what you actually have.** PDF, Word, PowerPoint, Excel, CSV, JSON, email, EPUB, OpenDocument, HTML,

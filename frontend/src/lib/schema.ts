@@ -75,6 +75,24 @@ export function getField(config: Config, stage: string, key: string): unknown {
   return config[stage]?.[key];
 }
 
+/** The note for an edited setting: its gain and cost, then when it applies. Null when there is none. */
+export function changeNote(
+  notes: Record<string, Record<string, string>>,
+  path: string,
+  value: unknown,
+  previous: unknown,
+  rebuild: boolean,
+): string | null {
+  const entry = notes[path];
+  if (!entry) return null;
+  let text = entry["*"];
+  if (typeof value === "boolean") text = entry[String(value)];
+  else if (typeof value === "number" && typeof previous === "number") text = entry[value > previous ? "up" : "down"];
+  else if (typeof value === "string" && entry[value]) text = entry[value];
+  if (!text) return null;
+  return `${text} ${rebuild ? "Needs a rebuild." : "Applies to the next question."}`;
+}
+
 export function setField(config: Config, stage: string, key: string, value: unknown): Config {
   return { ...config, [stage]: { ...config[stage], [key]: value } };
 }

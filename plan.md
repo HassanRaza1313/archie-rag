@@ -163,7 +163,7 @@ every request scanned all chatbots to find one.
 
 **Next cycle (agreed November 2026):** F1 Models pane (done: Claude through the official SDK, OpenAI, Gemini,
 Ollama and OpenAI-compatible connections added in the app with a live check and encrypted keys, a model per chatbot
-stage); F2 a short note on every setting choice (gain, cost, when it applies); F3 groups of sources per assistant
+stage); F2 a short note on every setting choice (done: gain, cost and when it applies, shown as you edit); F3 groups of sources per assistant
 with a question router; F4 connectors with incremental sync (Jira, Confluence, SharePoint/OneDrive, S3, Google
 Drive, read-only databases, websites) that keep their fields as structured data; F5 structured answers (filters and
 counts from fields) and an entity layer; F6 optional graph expansion. Postgres, the load test and single sign-on

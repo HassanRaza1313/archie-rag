@@ -197,6 +197,8 @@ export interface SchemaResponse {
   schema: JsonSchema;
   index_stages: string[];
   presets: { name: string; description: string }[];
+  /** What changing a setting does, by "stage.field", then by value, "true"/"false", "up"/"down" or "*". */
+  notes: Record<string, Record<string, string>>;
 }
 
 export interface JsonSchema {

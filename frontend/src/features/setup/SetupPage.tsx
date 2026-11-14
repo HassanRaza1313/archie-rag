@@ -18,6 +18,7 @@ import {
   applyPreset,
   buildStages,
   changedFields,
+  changeNote,
   type FieldSpec,
   getField,
   groupStages,
@@ -288,6 +289,17 @@ export function SetupPage() {
       value={getField(draft, item.stage, item.key)}
       provider={String(getField(draft, item.stage, "provider") ?? "")}
       changed={unsaved.has(`${item.stage}.${item.key}`)}
+      note={
+        schema.data && kb.data && unsaved.has(`${item.stage}.${item.key}`)
+          ? changeNote(
+              schema.data.notes,
+              `${item.stage}.${item.key}`,
+              getField(draft, item.stage, item.key),
+              getField(kb.data.config, item.stage, item.key),
+              stage.rebuild,
+            )
+          : null
+      }
       error={problems.get(`${item.stage}.${item.key}`)}
       onChange={(value) => {
         setSaved(null);

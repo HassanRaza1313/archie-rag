@@ -60,6 +60,7 @@ from ragkit.formats import IMAGE_TYPES, MEDIA_TYPES
 from ragkit.index import BUILTIN_FILTER_FIELDS, VectorIndex
 from ragkit.jobs import BUILD_STAGES, Builder, is_terminal, run_worker
 from ragkit.layout import layout_available
+from ragkit.notes import NOTES
 from ragkit.observability import (
     UNMATCHED_ROUTE,
     Metrics,
@@ -581,6 +582,7 @@ def create_app(
             "schema": config_json_schema(),
             "index_stages": list(INDEX_STAGES),
             "presets": [{"name": name, "description": PRESET_DESCRIPTIONS[name]} for name in PRESETS],
+            "notes": NOTES,
         }
 
     @app.get("/api/presets/{name}")

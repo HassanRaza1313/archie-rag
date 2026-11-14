@@ -40,6 +40,11 @@ Add the extension to `SourceConfig.file_types`. Chunking, indexing and citations
 People then add it in Preferences > Models. Most hosted and self-hosted servers already speak the OpenAI API, so the
 "Other server" kind covers them without code.
 
+## A setting
+
+Add the field with `option(...)` in `config.py`, then its notes in `notes.py`: one per choice, `true`/`false` for
+a switch, `up`/`down` for a number, `*` for text. `tests/test_notes.py` fails until every setting has them.
+
 ## A PII detector
 
 `backend/src/ragkit/privacy.py`: add `DETECTORS["kind"] = (regex, validator)`; the order of `DETECTORS` is the
