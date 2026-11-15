@@ -9,7 +9,8 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
   its essential settings with one-line help; changing one shows what you gain, what it costs and when it applies;
   advanced settings are one click away; three presets cover most needs.
 - **Bounded agent.** Condenses follow-ups, retries weak retrievals with a rewritten or broader search, abstains with
-  the closest passages instead of guessing, and checks that answers cite real sources.
+  the closest passages instead of guessing, and checks each sentence of an answer against the passage it cites
+  with a small local model, marking any the sources don't back.
 - **Reads what you actually have.** PDF, Word, PowerPoint, Excel, CSV, JSON, email, EPUB, OpenDocument, HTML,
   Markdown and text; images through OCR; audio and video transcribed on your own machine, cited by timestamp.
   A fast text reader
@@ -58,7 +59,7 @@ style → **Create**. Archie builds it and opens Ask. Requirements, every comman
 ## Development
 
 ```bash
-cd backend && .venv/bin/python -m pytest          # 227 tests; ruff + mypy configured in pyproject.toml
+cd backend && .venv/bin/python -m pytest          # 245 tests; ruff + mypy configured in pyproject.toml
 cd frontend && npm test && npm run lint && npm run typecheck
 ```
 

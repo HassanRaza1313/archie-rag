@@ -263,10 +263,11 @@ class AgentConfig(BaseModel):
     confidence_threshold: float = option(
         0.35, "Confidence threshold", "Below this the agent retries, then abstains.", ge=0.0, le=1.0
     )
-    verification: Literal["citations", "llm", "off"] = option(
-        "citations",
+    verification: Literal["claims", "citations", "llm", "off"] = option(
+        "claims",
         "Answer check",
-        "citations: answer must cite real sources (instant). llm: a second model call judges grounding.",
+        "claims: a small local model checks each sentence against the source it cites. citations: answer must "
+        "cite real sources (instant). llm: a second model call judges grounding.",
     )
     strategies: list[Literal["rewrite", "broaden", "decompose"]] = option(
         ["rewrite", "broaden"],
@@ -411,7 +412,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         "retrieval": {"candidates": 12},
         "rerank": {"top_n": 4},
         "context": {"token_budget": 2000},
-        "agent": {"max_reformulations": 0, "strategies": ["broaden"]},
+        "agent": {"max_reformulations": 0, "strategies": ["broaden"], "verification": "citations"},
         "generation": {"max_tokens": 500},
     },
 }

@@ -17,7 +17,7 @@ import {
   StatusBadge,
   TextArea,
 } from "../../components/ui";
-import { type AnswerSummary, api, type ChatEvent, chatBase, type Source, streamChat } from "../../lib/api";
+import { type AnswerSummary, api, type ChatEvent, type Claim, chatBase, type Source, streamChat } from "../../lib/api";
 import { formatMs, pages } from "../../lib/format";
 import { can, useMe } from "../account/auth";
 import { BuildProgress, useLiveJob } from "../build/BuildPage";
@@ -34,6 +34,7 @@ export interface Message {
   outcome?: string;
   verify?: string;
   verifyReason?: string;
+  claims?: Claim[];
   summary?: AnswerSummary;
   traceId?: string;
   error?: string;
@@ -172,7 +173,16 @@ function Passage({ text }: { text: string }) {
   );
 }
 
-function verdictText(verify: string | undefined): { tone: "ok" | "warn"; text: string } | null {
+function verdictText(message: Message): { tone: "ok" | "warn"; text: string } | null {
+  const { verify, claims } = message;
+  if (claims?.length) {
+    const unbacked = claims.filter((claim) => !claim.backed).length;
+    if (!unbacked) return { tone: "ok", text: "Every sentence matches its source" };
+    return {
+      tone: "warn",
+      text: `${unbacked === 1 ? "1 sentence" : `${unbacked} sentences`} not found in the sources`,
+    };
+  }
   if (verify === "pass") return { tone: "ok", text: "Every claim cites a source" };
   if (verify === "fail") return { tone: "warn", text: "Some claims have no source" };
   return null;
@@ -180,12 +190,21 @@ function verdictText(verify: string | undefined): { tone: "ok" | "warn"; text: s
 
 function Answer({ message, onCite }: { message: Message; onCite: (label: string, from: Element) => void }) {
   const known = new Set(message.sources.map((source) => source.label));
+  const unbacked = (message.claims ?? []).filter((claim) => !claim.backed).map((claim) => claim.text);
   return (
     <div className={cn("text-[1.0625rem] leading-[1.6] whitespace-pre-wrap", message.streaming && "streaming-caret")}>
-      {splitCitations(message.text).map((segment, index) =>
+      {splitCitations(message.text, unbacked).map((segment, index) =>
         segment.kind === "text" ? (
-          // biome-ignore lint/suspicious/noArrayIndexKey: segments derive from the text and never reorder
-          <span key={index}>{segment.text}</span>
+          segment.flagged ? (
+            // biome-ignore lint/suspicious/noArrayIndexKey: segments derive from the text and never reorder
+            <span key={index} title="Not found in the cited source" className="unbacked">
+              {segment.text}
+              <span className="sr-only"> (not found in the cited source)</span>
+            </span>
+          ) : (
+            // biome-ignore lint/suspicious/noArrayIndexKey: segments derive from the text and never reorder
+            <span key={index}>{segment.text}</span>
+          )
         ) : (
           // biome-ignore lint/suspicious/noArrayIndexKey: segments derive from the text and never reorder
           <span key={index} className="mx-0.5 inline-flex gap-1 align-[2px]">
@@ -247,7 +266,7 @@ function Sources({ message, onOpen }: { message: Message; onOpen: (source: Sourc
 
 function HowAnswered({ message, onTrace }: { message: Message; onTrace?: () => void }) {
   const summary = message.summary;
-  const verdict = verdictText(message.verify);
+  const verdict = verdictText(message);
   return (
     <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-slate">
       {message.outcome && message.outcome !== "answered" && <StatusBadge status={message.outcome} />}
@@ -536,6 +555,7 @@ export function ChatView({
               summary: event.summary,
               verify: event.verify ?? message.verify,
               verifyReason: event.verify_reason ?? message.verifyReason,
+              claims: event.claims,
               traceId: event.trace_id,
               streaming: false,
             };

@@ -139,6 +139,18 @@ describe("splitCitations", () => {
     expect(splitCitations("No sources")).toEqual([{ kind: "text", text: "No sources" }]);
     expect(splitCitations("[S1;S4]")).toEqual([{ kind: "cite", labels: ["S1", "S4"] }]);
   });
+
+  it("marks flagged sentences around their citations", () => {
+    expect(splitCitations("Ratio is 3:1 [S1]. Add meat [S1]. Turn weekly.", ["Add meat [S1].", "absent"])).toEqual([
+      { kind: "text", text: "Ratio is 3:1 " },
+      { kind: "cite", labels: ["S1"] },
+      { kind: "text", text: ". " },
+      { kind: "text", text: "Add meat ", flagged: true },
+      { kind: "cite", labels: ["S1"] },
+      { kind: "text", text: ".", flagged: true },
+      { kind: "text", text: " Turn weekly." },
+    ]);
+  });
 });
 
 describe("parseGolden", () => {

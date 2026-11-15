@@ -81,10 +81,19 @@ export type ChatEvent =
       citations: Source[];
       verify?: string;
       verify_reason?: string;
+      claims?: Claim[];
       summary?: AnswerSummary;
       trace_id: string;
     }
   | { type: "error"; message: string; trace_id?: string };
+
+/** One sentence of an answer, checked against the sources it cites. */
+export interface Claim {
+  text: string;
+  support: number;
+  backed: boolean;
+  sources: string[];
+}
 
 export interface AnswerSummary {
   searched: number;

@@ -86,10 +86,23 @@ class FakeReranker:
         return [len(terms & set(keyword_terms(text))) / len(terms) if terms else 0.0 for text in texts]
 
 
+class FakeEntailment:
+    """Backs every sentence except those containing one of ``unsupported``."""
+
+    def __init__(self) -> None:
+        self.unsupported: set[str] = set()
+        self.calls = 0
+
+    def entailment(self, pairs: list[tuple[str, str]]) -> list[float]:
+        self.calls += 1
+        return [0.1 if self.unsupported & set(keyword_terms(claim)) else 0.9 for _, claim in pairs]
+
+
 class FakeRegistry:
     def __init__(self) -> None:
         self.provider = FakeProvider()
         self.rerank_enabled = True
+        self.entailment: FakeEntailment | None = FakeEntailment()
 
     def get(self, name: str) -> FakeProvider:
         if name not in ("ollama", "openai"):
@@ -98,6 +111,11 @@ class FakeRegistry:
 
     def reranker(self, model: str) -> FakeReranker | None:
         return FakeReranker() if self.rerank_enabled else None
+
+    def claim_checker(self) -> FakeEntailment:
+        if self.entailment is None:
+            raise ImportError("no claim model")
+        return self.entailment
 
     async def close(self) -> None:
         return None

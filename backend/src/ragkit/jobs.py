@@ -285,7 +285,15 @@ class Builder:
         if empty and not config.retrieval.groups:
             raise BuildFailedError("no chunks were indexed; check the failures and the parsing settings")
         hits = None if empty else await self._smoke_test(collection, config)
-        tracker.finish("smoke_test", detail={"queries": 0 if empty else 3, "answered": hits})
+        claim_check = None
+        if config.agent.verification == "claims":  # fetch the model now, so the first answer is not kept waiting
+            try:
+                await asyncio.to_thread(self.providers.claim_checker)
+                claim_check = "ready"
+            except Exception as exc:
+                claim_check = f"unavailable, answers fall back to the citation check ({type(exc).__name__})"
+        detail = {"queries": 0 if empty else 3, "answered": hits, "claim_check": claim_check}
+        tracker.finish("smoke_test", detail=detail)
         if hits == 0:
             raise BuildFailedError("smoke test: sample queries returned nothing")
 

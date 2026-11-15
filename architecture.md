@@ -54,6 +54,7 @@ backend/src/ragkit/
   backup.py       one-file backup and restore of the database and uploads
   agent.py        the bounded agent (state machine) that answers a chat request
   router.py       picks which source groups (other chatbots) a question searches
+  claims.py       checks each answer sentence against its cited passage (local entailment model)
   telemetry.py    request traces, one-line request logs, JSON logging
   jobs.py         build pipeline and worker loop
   evaluation.py   golden-set retrieval evaluation
@@ -211,7 +212,7 @@ prepare ─(follow-up?)─▶ condense ─▶ route ─smalltalk─▶ reply
 | retrieve | §6.1 |
 | reformulate | `rewrite` (LLM paraphrase, new embedding) or `broaden` (2× candidates, filters dropped) |
 | generate | Template with labelled sources `[S1] file › section (p. 3)`; streamed token by token |
-| verify | `citations`: cited labels must exist and ≥ 50 % of claim sentences must cite (instant). `llm`: judge call |
+| verify | `claims` (default): each sentence checked against its cited passage by a local entailment model (§6.6). `citations`: cited labels must exist and ≥ 50 % of claim sentences must cite (instant). `llm`: judge call |
 | abstain | Configured message plus the three closest passages, so the user sees why |
 
 LLM calls per request are capped: condense ≤ 1, decompose ≤ 1, rewrite ≤ max retries, generate 1, judge ≤ 1.
@@ -263,6 +264,24 @@ so one cross-encoder scores every group's passages on the same scale. Per questi
 Profiles are built lazily per collection and kept in memory per process. The answer cache scope includes every
 group's index, so a rebuilt group never serves stale answers. A chatbot with groups and no files of its own builds
 an empty index and answers only from its groups.
+
+### 6.6 Claim check (`claims.py`)
+The default answer check (`agent.verification: claims`) checks each sentence against the passage it cites with a
+small local entailment model (DeBERTa-v3-xsmall trained on MNLI, FEVER, ANLI and LingNLI, MIT licence; int8 ONNX,
+87 MB, CPU, no PyTorch). It is downloaded into the model cache by the first build that uses it.
+
+1. The answer is split into sentences per paragraph. Questions, "I don't know" and fragments are skipped. A
+   sentence without its own citation borrows the next cited sentence's in its paragraph, else the previous one's,
+   else every source the answer cites.
+2. Each sentence (citations and markup removed) is scored against every 200-word window, with a 150-word stride, of
+   each passage it cites; its support is the best entailment probability. At 0.5 or above it counts as backed.
+3. The answer passes when at least half its sentences are backed. Unbacked sentences are marked in the answer,
+   and the share backed is the `support` attribute of the trace's `verify` span.
+
+A cited label that does not exist, or an answer with no citations, falls back to the citation check. So does a
+missing model, with a note in the trace. Three sentences take about 0.1 s on a laptop CPU. A small NLI model misses
+paraphrase that needs inference, so a flag means "check this", not "false"; `on_verify_fail: abstain` replaces an
+answer only when most of it is unbacked.
 
 ## 7. Security and privacy
 
@@ -396,7 +415,7 @@ an OpenAI-compatible GPU server), server-mode Qdrant with HNSW for large corpora
 | Generated TypeScript client | Hand-written typed client (`lib/api.ts`) | Most responses are dynamic dicts; generated types would add little |
 | Implicit capture of the user's name | Explicit profile in the UI | Implicit extraction is unreliable and surprising |
 | Person-name redaction (NER) | Not built (validated pattern detectors only) | Needs a model dependency; add Presidio as a detector when required |
-| Self-validation by an LLM | Citation check by default, LLM judge opt-in | Doubles latency on a local 9B model for modest gain |
+| Self-validation by an LLM | Local per-sentence claim check by default, LLM judge opt-in | A judge call doubles latency on a local 9B model; a small NLI model checks each sentence in a fraction of a second |
 | Redact PII before every LLM call | Logs always; prompt sources when the model is remote | Redacting context for a local model hurts answers and protects nothing |
 | Pure semantic answer cache | Exact + guarded paraphrase cache, scoped and bypassed when personalised | Embedding-only hits return confidently wrong answers |
 | Wait for ingestion before chatting | Build into a new collection, swap atomically | No downtime on rebuilds |

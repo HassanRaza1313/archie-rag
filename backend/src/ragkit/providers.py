@@ -25,6 +25,7 @@ from ragkit.settings import Settings
 from ragkit.telemetry import request_id_var
 
 if TYPE_CHECKING:
+    from ragkit.claims import Entailment
     from ragkit.storage import Database
 
 EmbedKind = Literal["document", "query"]
@@ -419,6 +420,11 @@ class ProviderRegistry:
         if model not in self._rerankers:
             self._rerankers[model] = FastEmbedReranker(model, self.settings.model_cache_dir)
         return self._rerankers[model]
+
+    def claim_checker(self) -> Entailment:
+        from ragkit import claims
+
+        return claims.load(self.settings.model_cache_dir)
 
     async def close(self) -> None:
         for provider in self._providers.values():

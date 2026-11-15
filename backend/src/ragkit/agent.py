@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from ragkit import claims
 from ragkit.cache import AnswerCache, scope_key
 from ragkit.config import KnowledgeBaseConfig
 from ragkit.index import VectorIndex
@@ -130,6 +131,11 @@ def verify_citations(answer: str, source_count: int) -> tuple[str, str]:
     if claims and len(cited) / len(claims) < 0.5:
         return "fail", f"only {len(cited)} of {len(claims)} claims cite a source"
     return "pass", f"{len(set(labels))} source(s) cited"
+
+
+def support_of(checked: list[claims.Claim]) -> float | None:
+    """Share of checked sentences their sources back; None when nothing was checked."""
+    return round(sum(c.support >= claims.SUPPORTED for c in checked) / len(checked), 3) if checked else None
 
 
 def source_label(index: int, candidate: Candidate) -> dict[str, Any]:
@@ -480,10 +486,14 @@ class Agent:
         answer = "".join(parts).strip()
 
         verdict, reason = "skipped", "verification off"
+        checked: list[claims.Claim] = []
         if config.agent.verification != "off":
             yield {"type": "status", "stage": "verify"}
-            with trace.span("verify", method=config.agent.verification):
-                if config.agent.verification == "citations":
+            with trace.span("verify", method=config.agent.verification) as attributes:
+                if config.agent.verification == "claims":
+                    checked, verdict, reason = await self._check_claims(answer, result.selected, trace)
+                    attributes["support"] = support_of(checked)
+                elif config.agent.verification == "citations":
                     verdict, reason = verify_citations(answer, len(sources))
                 else:
                     verdict, reason = await self._judge(llm, config, prompt, answer)
@@ -510,6 +520,17 @@ class Agent:
             "citations": citations,
             "verify": verdict,
             "verify_reason": reason,
+            "claims": [
+                {
+                    "text": c.text,
+                    "support": round(c.support, 3),
+                    "backed": c.support >= claims.SUPPORTED,
+                    "sources": [f"S{label}" for label in c.labels],
+                }
+                for c in checked
+            ]
+            if outcome == "answered"
+            else [],
             "summary": answer_summary(trace),
             "trace_id": trace.id,
         }
@@ -576,6 +597,26 @@ class Agent:
         funnel["context_tokens"] = sum(estimate_tokens(c.text) for c in selected)
         ranked = best_of([r.ranked for r in results])  # the closest passages, shown when Archie abstains
         return RetrievalResult(selected, ranked, funnel, confidence(r.confidence for r in results))
+
+    async def _check_claims(
+        self, answer: str, passages: list[Candidate], trace: Trace
+    ) -> tuple[list[claims.Claim], str, str]:
+        """Each cited sentence against its passages; falls back to the citation check without the model."""
+        labels = cited_labels(answer)
+        if not labels or any(not 1 <= label <= len(passages) for label in labels):
+            return [], *verify_citations(answer, len(passages))
+        try:
+            model = await asyncio.to_thread(self.providers.claim_checker)
+            checked = await asyncio.to_thread(
+                claims.check, model, claims.claims_of(answer, len(passages)), [p.text for p in passages]
+            )
+        except Exception as exc:
+            trace.decide(f"claim check unavailable, checked citations instead ({type(exc).__name__})")
+            logger.warning("claim check unavailable: %s", exc)
+            return [], *verify_citations(answer, len(passages))
+        verdict, reason = claims.verdict(checked)
+        trace.decide(f"claim check: {reason}")
+        return checked, verdict, reason
 
     async def _reranker(self, config: KnowledgeBaseConfig, trace: Trace) -> Reranker | None:
         if not config.rerank.enabled:

@@ -178,6 +178,8 @@ NOTES: dict[str, dict[str, str]] = {
         "down": "Answers more often, including from weaker matches.",
     },
     "agent.verification": {
+        "claims": "Each sentence is checked against the passage it cites, on this machine: unsupported sentences are "
+        "marked. Downloads a 90 MB model once and adds a fraction of a second.",
         "citations": "Checks that every answer cites real sources. Fast and free.",
         "llm": "A model also checks the answer against its sources: catches unsupported claims, adds a model call.",
         "off": "No checks: fastest, and unsupported answers go out unflagged.",

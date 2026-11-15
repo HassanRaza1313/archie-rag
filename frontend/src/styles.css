@@ -189,6 +189,16 @@ dialog::backdrop {
   animation: caret 1s step-end infinite;
 }
 
+/* A sentence the claim check could not find in its cited source. */
+.unbacked {
+  text-decoration: underline dotted var(--color-warn);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.25em;
+  background: var(--color-warn-soft);
+  border-radius: 3px;
+  box-decoration-break: clone;
+}
+
 @keyframes settle {
   from {
     opacity: 0;
