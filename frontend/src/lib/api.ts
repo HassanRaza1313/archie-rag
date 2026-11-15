@@ -58,6 +58,8 @@ export interface Source {
   label: string;
   chunk_id: string;
   file: string | null;
+  /** The chatbot this passage came from, when the answer searched several. */
+  group?: string | null;
   document_uri?: string | null;
   section: string | null;
   page_start: number | null;

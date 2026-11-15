@@ -43,6 +43,47 @@ function ProviderSelect({
   );
 }
 
+/** Other chatbots this one also searches, toggled by name. */
+function GroupPicker({
+  id,
+  kbId,
+  value,
+  describedBy,
+  onChange,
+}: {
+  id: string;
+  kbId?: string;
+  value: string[];
+  describedBy: string;
+  onChange: (value: string[]) => void;
+}) {
+  const kbs = useQuery({ queryKey: ["kbs"], queryFn: api.listKbs });
+  const others = (kbs.data ?? []).filter((kb) => kb.id !== kbId);
+  if (kbs.data && !others.length) return <p className="text-sm text-slate">Create another chatbot first.</p>;
+  return (
+    <fieldset className="m-0 flex flex-wrap gap-2 border-0 p-0" aria-labelledby={id} aria-describedby={describedBy}>
+      {others.map((kb) => {
+        const on = value.includes(kb.id);
+        return (
+          <button
+            key={kb.id}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(on ? value.filter((item) => item !== kb.id) : [...value, kb.id])}
+            className={cn(
+              "press h-7 cursor-default rounded-full px-3 text-sm",
+              on ? "bg-accent-soft font-medium text-accent" : "bg-plinth text-ink hover:bg-rule",
+            )}
+          >
+            {kb.name}
+            {kb.built_version === null && <span className="ml-1 text-slate">(not built)</span>}
+          </button>
+        );
+      })}
+    </fieldset>
+  );
+}
+
 /** Range problem for a number field, in plain words, or null. */
 export function rangeProblem(field: FieldSpec, value: unknown): string | null {
   if (field.kind !== "int" && field.kind !== "float") return null;
@@ -109,6 +150,7 @@ export function SchemaField({
   field,
   value,
   provider,
+  kbId,
   error,
   changed,
   note,
@@ -117,6 +159,8 @@ export function SchemaField({
   field: FieldSpec;
   value: unknown;
   provider?: string;
+  /** The chatbot being set up, left out of "Also search". */
+  kbId?: string;
   error?: string | null;
   changed: boolean;
   /** What this edit does, shown while the setting differs from the saved version. */
@@ -180,23 +224,32 @@ export function SchemaField({
       break;
     }
     case "list":
-      control = (
-        <Input
-          id={id}
-          aria-describedby={hintId}
-          value={Array.isArray(value) ? (value as string[]).join(", ") : ""}
-          placeholder="Separate with commas"
-          onChange={(e) =>
-            onChange(
-              e.target.value
-                .split(",")
-                .map((item) => item.trim())
-                .filter(Boolean),
-            )
-          }
-          className="font-mono"
-        />
-      );
+      control =
+        path === "retrieval.groups" ? (
+          <GroupPicker
+            id={id}
+            kbId={kbId}
+            value={Array.isArray(value) ? (value as string[]) : []}
+            describedBy={hintId}
+            onChange={onChange}
+          />
+        ) : (
+          <Input
+            id={id}
+            aria-describedby={hintId}
+            value={Array.isArray(value) ? (value as string[]).join(", ") : ""}
+            placeholder="Separate with commas"
+            onChange={(e) =>
+              onChange(
+                e.target.value
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+              )
+            }
+            className="font-mono"
+          />
+        );
       break;
     case "int":
     case "float":
@@ -257,7 +310,7 @@ export function SchemaField({
       <div>
         <label
           htmlFor={id}
-          id={field.kind === "multi" ? id : undefined}
+          id={field.kind === "multi" || path === "retrieval.groups" ? id : undefined}
           className="flex items-center gap-2 text-base font-medium"
         >
           {field.label}

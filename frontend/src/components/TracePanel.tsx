@@ -18,6 +18,7 @@ const SPAN_NAMES: Record<string, string> = {
   condense: "Read the conversation",
   embed: "Understand the question",
   cache: "Check earlier answers",
+  route: "Choose where to look",
   decompose: "Split the question",
   retrieve: "Search documents",
   rewrite: "Rephrase the search",

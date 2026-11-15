@@ -136,6 +136,16 @@ Only owners add or remove providers. Keys are encrypted on the server (`RAG_SECR
 the state folder) and never shown again. Backups leave that secret out, so after restoring onto another machine,
 add the keys again. A provider in use by a chatbot can't be removed until the chatbot uses another.
 
+### Groups and a front door
+Keep different kinds of documents in their own chatbots (HR policies, engineering notes, meeting recordings), each
+read and split its own way. Then, in another chatbot's **Manage > Settings > Retrieval**, turn on the ones it should
+**Also search**. For each question, a fast local router picks the likely chatbots from the words they use (or the
+one the question names) and searches only those; when unsure it searches several and merges the results. A chatbot
+can also have no files of its own: create it with **Uploads**, upload nothing, pick its groups and build. That gives
+everyone one front door. Sources in answers show which chatbot each passage came from, and **How Archie found
+this** shows why the router chose it. Anyone who can ask the front door, including through a share link, can read
+the groups' documents through it.
+
 ### More chats at once
 Set `RAG_API_REPLICAS` (say 3) and make `RAG_API_PORT` a range (`8000-8002`), then `rag up`. Each API process
 serves chats on its own CPU core; conversation memory and rate limits live in the database, so the processes agree,

@@ -182,7 +182,7 @@ class Builder:
 
         tracker.start("validate")
         refs = discover(config.source, self.settings, kb_id)
-        if not refs:
+        if not refs and not config.retrieval.groups:  # a chatbot that only searches others needs no files
             raise BuildFailedError("the source contains no supported files")
         try:
             probe = await embedder.embed(config.embedding.model, ["dimension probe"], "document")
@@ -281,10 +281,11 @@ class Builder:
 
         tracker.start("smoke_test")
         stats = self.db.collection_stats(collection)
-        if stats.get("chunks", 0) == 0:
+        empty = stats.get("chunks", 0) == 0
+        if empty and not config.retrieval.groups:
             raise BuildFailedError("no chunks were indexed; check the failures and the parsing settings")
-        hits = await self._smoke_test(collection, config)
-        tracker.finish("smoke_test", detail={"queries": 3, "answered": hits})
+        hits = None if empty else await self._smoke_test(collection, config)
+        tracker.finish("smoke_test", detail={"queries": 0 if empty else 3, "answered": hits})
         if hits == 0:
             raise BuildFailedError("smoke test: sample queries returned nothing")
 

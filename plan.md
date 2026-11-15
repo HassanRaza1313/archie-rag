@@ -163,11 +163,13 @@ every request scanned all chatbots to find one.
 
 **Next cycle (agreed November 2026):** F1 Models pane (done: Claude through the official SDK, OpenAI, Gemini,
 Ollama and OpenAI-compatible connections added in the app with a live check and encrypted keys, a model per chatbot
-stage); F2 a short note on every setting choice (done: gain, cost and when it applies, shown as you edit); F3 groups of sources per assistant
-with a question router; F4 connectors with incremental sync (Jira, Confluence, SharePoint/OneDrive, S3, Google
+stage); F2 a short note on every setting choice (done: gain, cost and when it applies, shown as you edit); F3 groups of sources
+per assistant with a question router (done: a chatbot also searches other chatbots, each with its own reader and
+index; a local naive Bayes router picks the likely ones, searches several when unsure, and a front door needs no
+files of its own); F4 connectors with incremental sync (Jira, Confluence, SharePoint/OneDrive, S3, Google
 Drive, read-only databases, websites) that keep their fields as structured data; F5 structured answers (filters and
 counts from fields) and an entity layer; F6 optional graph expansion. Postgres, the load test and single sign-on
-follow F4.
+follow F4. The order was refined by the ideas review in §11.
 
 **Done in the scale cycle:** B1 for one machine (conversation memory and rate limits in the database, so several
 API processes serve together: `RAG_API_REPLICAS`; database work, cache lookups and password checks off the event
@@ -227,3 +229,49 @@ then B1 and B2, then E.
 
 Still open: Postgres for several machines (B1), single sign-on, and prompt-injection screening for untrusted
 sources (C4, before connectors).
+
+## 11. Ideas review: what a better RAGFlow needs (November 2026)
+
+Ideas gathered from reported RAGFlow problems, checked against Archie. Most of the core is already here: one
+container and one command, embedded stores, hybrid search with rank fusion and a reranker, citations checked,
+abstaining with the closest passages, per-file time and memory limits with plain failure reasons, page-level OCR,
+header-repeating table chunks, small-to-big context, a chunk inspector with edits, a per-request trace, golden-set
+evaluation per config version, backups, and keys and settings exported as YAML.
+
+**Adopted** (G = trust layer, H = reach and operations):
+
+| Item | What | Why it fits |
+|---|---|---|
+| G1 Claim check | Split each answer into cited sentences; a small local entailment (NLI) model checks each against its passage; unsupported sentences are flagged or removed; a support score per answer | The strongest anti-hallucination step, local and cheap; today's check is whole-answer (citations exist, or one LLM call) |
+| G2 Feedback and gaps | Thumbs up/down on answers (shared pages too); Health lists the most asked unanswered questions, which show what the documents lack | Cheap, and tells owners what to add |
+| G3 Golden set drafted for you | Draft questions from the documents (enrichment already writes them), people keep or edit them; the set re-runs when settings are saved and shows what got better or worse | Turns F2's notes into measured results; removes the hardest step of evaluation |
+| G4 Show in document | A citation opens the original page with the passage highlighted (positions from the PDF text layer or the layout reader) | The most trusted way to show evidence |
+| G5 Source dates | Citations show each document's date; old ones are marked; a newer conflicting source is preferred and noted | Stale policies are a common wrong answer |
+| G6 Replay | Re-ask a past question on another settings version or model and compare side by side | Pairs with changing components on the go |
+| H1 OpenAI-compatible endpoint | `/v1/chat/completions` per chatbot with a scoped key, so Open WebUI, Slack bots and other tools can use a chatbot | Big reach for little code; alongside the MCP server (E1) |
+| H2 Scoped keys | Keys limited to one chatbot and to asking or managing (C1 made concrete) | Needed by H1 and E1 |
+| H3 Cost per answer | Price per model for paid providers; cost shown in the trace and per chatbot on Health | Paid models are now one click away |
+| H4 OpenTelemetry export | Optional OTLP export of request traces to Langfuse, Phoenix, Grafana or Datadog | Fits existing observability stacks |
+| H5 Safe upgrades | `rag up` takes a backup before a new version migrates the database; an API stability note | RAGFlow 1.0 upgrades were irreversible |
+| H6 Kubernetes | Helm chart with resource requests and limits, readiness probes, separate API and worker | Companies that deploy for customers expect it |
+| H7 Security policy and fuzzing | SECURITY.md (how to report), SBOM in releases, malformed-file tests on every reader | RAGFlow's CVE record is the top enterprise worry |
+| H8 Retry failed files | One click on Builds re-runs only the files that failed | Small, removes a common frustration |
+| F5 (extended) | Spreadsheets and CSVs also stored as real tables; numeric questions answered by a read-only, validated SQL query | Embedding rows of numbers is where table answers go wrong |
+
+**Left out, and why:**
+
+- Rewriting in Go or Rust, or one binary: no user gain; one container and `pip install` already start in minutes.
+- Swapping Qdrant for pgvector or sqlite-vec: churn without a gain; Postgres (B1) stores state, Qdrant keeps vectors.
+- Cloud parsing (LlamaParse, Unstructured) by default: it sends company documents to a third party; local readers
+  already cover scans and layouts. Possible later as an opt-in connection.
+- A policy engine (OpenFGA, Cedar) and multi-tenant isolation: one install serves one company; the single role
+  rule plus per-document access (C3) and SSO cover it. SCIM after SSO, if customers ask.
+- Automatic hardware tuning: the readers already run with limits; a GPU check can pick the speech model later.
+- Contradiction detection across sources: unreliable without an extra model call per answer; G5 handles the
+  common case, stale versus current documents.
+- A visual agent canvas and a code sandbox: they caused most of RAGFlow's CVEs; agents connect through MCP and H1.
+- Sampling live traffic with an LLM judge: costly; G1 scores every answer locally instead.
+- Answer-style templates (comparison, table extractor): the presets and chunking templates cover them.
+
+**Order:** F3 groups and router (done); G1, G2, G3 (they measure quality before connectors bring volume); F4 connectors
+with C4 and H2; H1 and E1; G4, G5; F5 with spreadsheet tables; H3 to H8 as they fit; then G6, B1 Postgres, SSO, F6.

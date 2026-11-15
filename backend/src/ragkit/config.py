@@ -193,6 +193,18 @@ class RetrievalConfig(BaseModel):
     filter_fields: list[str] = option(
         [], "Filterable fields", "Extra payload fields chat requests may filter on.", tier="advanced"
     )
+    groups: list[str] = option(
+        [],
+        "Also search",
+        "Other chatbots whose documents this one answers from. Each keeps its own reader and index.",
+        max_length=12,
+    )
+    routing: Literal["auto", "all"] = option(
+        "auto",
+        "Choosing where to search",
+        "auto: a fast local router picks the likely chatbots for each question. all: search every one, every time.",
+        tier="advanced",
+    )
 
 
 class FusionConfig(BaseModel):

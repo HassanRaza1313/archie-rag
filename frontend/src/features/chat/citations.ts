@@ -18,6 +18,7 @@ export function splitCitations(text: string): Segment[] {
 
 export const STAGE_LABELS: Record<string, string> = {
   condense: "Reading the conversation so far",
+  route: "Choosing where to look",
   embed: "Understanding your question",
   decompose: "Breaking the question into parts",
   retrieve: "Searching your documents",

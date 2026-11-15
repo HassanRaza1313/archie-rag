@@ -53,6 +53,7 @@ backend/src/ragkit/
   cache.py        answer cache: exact + guarded paraphrase match, frequency promotion
   backup.py       one-file backup and restore of the database and uploads
   agent.py        the bounded agent (state machine) that answers a chat request
+  router.py       picks which source groups (other chatbots) a question searches
   telemetry.py    request traces, one-line request logs, JSON logging
   jobs.py         build pipeline and worker loop
   evaluation.py   golden-set retrieval evaluation
@@ -205,6 +206,7 @@ prepare ─(follow-up?)─▶ condense ─▶ route ─smalltalk─▶ reply
 | condense | With history and a referential question ("why is that?"), one LLM call rewrites it as standalone |
 | route | Small talk gets a canned reply, with no LLM and no retrieval |
 | cache | Exact match, then paraphrase match (§6.4); bypassed for follow-ups and personalised requests |
+| groups | With `retrieval.groups`, the router (§6.5) picks which chatbots' indexes to search |
 | decompose | Opt-in: multi-part questions split into ≤ 3 sub-questions, each retrieved; confidence = weakest part |
 | retrieve | §6.1 |
 | reformulate | `rewrite` (LLM paraphrase, new embedding) or `broaden` (2× candidates, filters dropped) |
@@ -245,6 +247,22 @@ Each answered question bumps its count; the `capacity` most-asked of the last `h
 recency) form the active cache. Lookup: exact normalised match first; then cosine ≥ threshold **and** identical
 negations, numbers and named entities ("does it attract pests" ≠ "does it not attract pests"). Abstentions and
 failed verifications are never cached.
+
+### 6.5 Source groups and the router (`router.py`)
+A chatbot may also search other chatbots (`retrieval.groups`). Each group keeps its own index and its built
+version's search settings (search model, mode, fusion); ranking, context and generation follow the asking chatbot,
+so one cross-encoder scores every group's passages on the same scale. Per question:
+
+1. A question that names a group goes to it.
+2. Otherwise naive Bayes over each group's vocabulary (in how many of up to 2,000 sampled passages each word
+   appears, with every group counted as at least 50 passages) gives each group a probability. Groups are added,
+   most likely first, until they reach 90 % (at most 3). Words found in no group are ignored; none known means all.
+3. Each chosen group is searched in parallel; per question the best group sets the confidence, and results merge
+   by relevance before the token budget. The `broaden` retry searches every group.
+
+Profiles are built lazily per collection and kept in memory per process. The answer cache scope includes every
+group's index, so a rebuilt group never serves stale answers. A chatbot with groups and no files of its own builds
+an empty index and answers only from its groups.
 
 ## 7. Security and privacy
 

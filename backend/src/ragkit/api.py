@@ -703,6 +703,8 @@ def create_app(
     async def save_config(kb_id: str, body: ConfigBody, context: Ctx) -> dict[str, Any]:
         kb = kb_or_404(context, kb_id)
         config = parse_config(body.config)
+        if any(group == kb_id or context.db.get_kb(group) is None for group in config.retrieval.groups):
+            raise HTTPException(422, "Also search can only name other chatbots that exist.")
         version = context.db.add_config_version(kb_id, config)
         requires_rebuild = config.index_fingerprint() != kb["built_index_hash"]
         return {"version": version, "requires_rebuild": requires_rebuild}
@@ -1009,7 +1011,7 @@ async def _validate(context: AppContext, kb: dict[str, Any], config: KnowledgeBa
             "by_type": by_type,
             "megabytes": round(sum(r.size for r in refs) / 1e6, 2),
         }
-        if not refs:
+        if not refs and not config.retrieval.groups:
             warnings.append({"stage": "source", "msg": "This folder has no supported files yet."})
     except SourceError as exc:
         checks["source"] = {"ok": False}

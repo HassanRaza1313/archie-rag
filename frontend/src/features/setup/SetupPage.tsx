@@ -288,6 +288,7 @@ export function SetupPage() {
       field={item}
       value={getField(draft, item.stage, item.key)}
       provider={String(getField(draft, item.stage, "provider") ?? "")}
+      kbId={kbId}
       changed={unsaved.has(`${item.stage}.${item.key}`)}
       note={
         schema.data && kb.data && unsaved.has(`${item.stage}.${item.key}`)

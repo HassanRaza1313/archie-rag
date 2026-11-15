@@ -117,6 +117,15 @@ NOTES: dict[str, dict[str, str]] = {
         "up": "A more exhaustive vector search: better recall, slower.",
         "down": "Faster search with slightly lower recall.",
     },
+    "retrieval.groups": {
+        "*": "Answers can draw on those chatbots' documents, read their own way. People who can use this chatbot "
+        "can read them through it."
+    },
+    "retrieval.routing": {
+        "auto": "Searches only the chatbots a question is likely about: faster, less noise. Unsure questions "
+        "search several.",
+        "all": "Every chatbot is searched for every question: nothing is missed, but answers are slower.",
+    },
     "fusion.method": {
         "rrf": "Merges searches by rank: steady and needs no tuning.",
         "dbsf": "Blends scores instead of ranks; better when one search is clearly stronger. "

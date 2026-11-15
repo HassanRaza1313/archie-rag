@@ -13,6 +13,8 @@ rewrite <= max_reformulations, generate 1, judge 1 (only with ``verification=llm
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
 import json
 import logging
 import re
@@ -27,6 +29,7 @@ from ragkit.index import VectorIndex
 from ragkit.privacy import Redactor, redact
 from ragkit.providers import ChatOptions, ModelProvider, ProviderError, ProviderRegistry, Reranker
 from ragkit.retrieval import Candidate, RetrievalResult, deduplicate, fit_budget, retrieve
+from ragkit.router import Profile, profile_of, route
 from ragkit.storage import MEMORY_TTL_S, MEMORY_TURNS_KEPT, Database
 from ragkit.telemetry import REQUEST_LOGGER, Trace
 from ragkit.textutil import estimate_tokens, split_sentences
@@ -34,6 +37,7 @@ from ragkit.textutil import estimate_tokens, split_sentences
 logger = logging.getLogger(__name__)
 
 Event = dict[str, Any]
+PROFILE_SAMPLE = 2000  # passages per group the router learns its vocabulary from
 
 CONDENSE_PROMPT = """Rewrite the follow-up question as a standalone question, using the conversation for context.
 Reply with the question only.
@@ -74,6 +78,17 @@ _SMALLTALK = re.compile(
 _MULTI_PART = re.compile(r";|\b(compare|versus|vs\.?|as well as|and also)\b", re.IGNORECASE)
 _CITATION = re.compile(r"\[\s*(S\d+(?:\s*[,;]\s*S\d+)*)\s*\]")
 _DONT_KNOW = re.compile(r"\b(do not|don't|cannot|can't) (know|find|answer)\b", re.IGNORECASE)
+
+
+@dataclass
+class Target:
+    """One index a question can search: the chatbot's own, or a group it also searches."""
+
+    kb_id: str
+    name: str
+    collection: str
+    config: KnowledgeBaseConfig  # the group's built settings, with the asking chatbot's ranking and context
+    index_hash: str
 
 
 @dataclass
@@ -122,6 +137,7 @@ def source_label(index: int, candidate: Candidate) -> dict[str, Any]:
     return {
         "label": f"S{index}",
         "chunk_id": candidate.id,
+        "group": payload.get("group"),
         "file": payload.get("file_name"),
         "document_uri": payload.get("document_uri"),
         "section": payload.get("section") or None,
@@ -137,7 +153,8 @@ def format_sources(sources: list[Candidate], redactor: Redactor | None) -> str:
     blocks = []
     for index, candidate in enumerate(sources, start=1):
         payload = candidate.payload
-        where = " › ".join(part for part in (payload.get("file_name"), payload.get("section")) if part)
+        parts = (payload.get("group"), payload.get("file_name"), payload.get("section"))
+        where = " › ".join(part for part in parts if part)
         pages = payload.get("page_start")
         if pages and payload.get("page_end") and payload["page_end"] != pages:
             where += f" (pp. {pages}-{payload['page_end']})"
@@ -197,6 +214,7 @@ class Agent:
         self.providers = providers
         self.cache = cache
         self.observer = observer
+        self._profiles: dict[str, Profile] = {}  # by collection; a rebuild makes a new collection
 
     async def run(self, kb_id: str, request: ChatRequest) -> AsyncIterator[Event]:
         kb = await asyncio.to_thread(self.db.get_kb, kb_id)
@@ -211,15 +229,19 @@ class Agent:
             request.session_id,
             level=config.telemetry.level,
         )
-        if not kb["active_collection"]:
+        targets = await asyncio.to_thread(self._targets, kb, config, trace)
+        if not targets:
             trace.outcome = "error"
             trace.error = {"stage": "prepare", "type": "NotBuilt", "message": "build the knowledge base first"}
-            yield {"type": "error", "message": "This chatbot has not been built yet.", "trace_id": trace.id}
+            message = "This chatbot has not been built yet."
+            if config.retrieval.groups:
+                message = "Build this chatbot, or the chatbots it searches, first."
+            yield {"type": "error", "message": message, "trace_id": trace.id}
             self._finish(trace)
             return
         current_stage = "prepare"
         try:
-            async for event in self._answer(kb, config, request, trace):
+            async for event in self._answer(kb, config, request, trace, targets):
                 if event["type"] == "status":
                     current_stage = event["stage"]
                 yield event
@@ -236,6 +258,41 @@ class Agent:
         finally:
             self._finish(trace)
 
+    def _targets(self, kb: dict[str, Any], config: KnowledgeBaseConfig, trace: Trace) -> list[Target]:
+        targets = []
+        own = kb["active_collection"]
+        if own and not (config.retrieval.groups and not self.db.collection_stats(own).get("chunks")):
+            targets.append(Target(kb["id"], kb["name"], kb["active_collection"], config, kb["built_index_hash"] or ""))
+        for group_id in dict.fromkeys(config.retrieval.groups):
+            group = self.db.get_kb(group_id) if group_id != kb["id"] else None
+            if group is None or not group["active_collection"] or group["built_version"] is None:
+                trace.decide(f"skipped {group['name'] if group else group_id}: not built or no longer exists")
+                continue
+            _, built = self.db.get_config(group_id, group["built_version"])
+            # The group's own search settings fit its index; ranking and context follow the asking chatbot.
+            merged = built.model_copy(update={"rerank": config.rerank, "context": config.context})
+            collection, index_hash = group["active_collection"], group["built_index_hash"]
+            targets.append(Target(group_id, group["name"], collection, merged, index_hash))
+        return targets
+
+    async def _profile(self, target: Target) -> Profile:
+        if target.collection not in self._profiles:
+            if len(self._profiles) > 64:
+                self._profiles.clear()
+            payloads = await asyncio.to_thread(self.index.sample_payloads, target.collection, PROFILE_SAMPLE)
+            self._profiles[target.collection] = profile_of(payloads)
+        return self._profiles[target.collection]
+
+    async def _embed(
+        self, config: KnowledgeBaseConfig, queries: list[str], memo: dict[tuple[str, ...], list[list[float] | None]]
+    ) -> list[list[float] | None]:
+        """Query vectors in this config's search model; each model embeds each query once per request."""
+        key = (config.embedding.provider, config.embedding.model, *queries)
+        if key not in memo:
+            provider = self.providers.get(config.embedding.provider)
+            memo[key] = list(await provider.embed(config.embedding.model, queries, "query"))
+        return memo[key]
+
     def _finish(self, trace: Trace) -> None:
         if trace.level != "minimal":
             self.db.insert_trace(trace.to_record())
@@ -244,7 +301,7 @@ class Agent:
             self.observer(trace)
 
     async def _answer(
-        self, kb: dict[str, Any], config: KnowledgeBaseConfig, request: ChatRequest, trace: Trace
+        self, kb: dict[str, Any], config: KnowledgeBaseConfig, request: ChatRequest, trace: Trace, targets: list[Target]
     ) -> AsyncIterator[Event]:
         llm = self.providers.get(config.generation.provider)
         session_id = f"{kb['id']}:{request.session_id}" if request.session_id else None  # one chatbot's memory only
@@ -281,16 +338,18 @@ class Agent:
             return
         trace.decide("searched the documents")
 
-        embed_provider = self.providers.get(config.embedding.provider)
-        needs_vector = config.retrieval.mode != "keyword" or (config.cache.enabled and config.cache.semantic)
+        memo: dict[tuple[str, ...], list[list[float] | None]] = {}
         vector = None
-        if needs_vector:
+        if config.cache.enabled and config.cache.semantic:
             yield {"type": "status", "stage": "embed"}
             with trace.span("embed"):
-                vector = (await embed_provider.embed(config.embedding.model, [question], "query"))[0]
+                vector = (await self._embed(config, [question], memo))[0]
 
         personalised = any(request.profile.values())
-        scope = scope_key(kb["id"], kb["built_index_hash"] or "", config.query_fingerprint())
+        index_hash = kb["built_index_hash"] or ""
+        if config.retrieval.groups:  # an answer also depends on every group's index
+            index_hash = hashlib.sha256("|".join(f"{t.kb_id}:{t.index_hash}" for t in targets).encode()).hexdigest()
+        scope = scope_key(kb["id"], index_hash, config.query_fingerprint())
         cacheable = config.cache.enabled and not condensed and not personalised and not request.filters
         if config.cache.enabled and not cacheable:
             reason = "follow-up" if condensed else "personalised request" if personalised else "filtered request"
@@ -317,16 +376,35 @@ class Agent:
             if len(sub_questions) > 1:
                 queries = sub_questions
                 trace.decide(f"decomposed into {len(sub_questions)} sub-questions")
-        vectors = [vector] if len(queries) == 1 else await self._embed_queries(embed_provider, config, queries)
+
+        routed = targets
+        if len(targets) > 1 and config.retrieval.routing == "auto":
+            yield {"type": "status", "stage": "route"}
+            with trace.span("route") as attributes:
+                profiles = {t.name: await self._profile(t) for t in targets}
+                decision = route(question, profiles)
+                attributes["groups"] = decision.chosen
+            routed = [t for t in targets if t.name in decision.chosen]
+            trace.decide(f"routed: {decision.reason}")
+        elif len(targets) > 1:
+            trace.decide(f"searched all {len(targets)} groups")
 
         reranker = await self._reranker(config, trace)
         candidates, filters = config.retrieval.candidates, request.filters or None
         retry_strategies = [s for s in config.agent.strategies if s != "decompose"]
         attempt = 0
         while True:
+            dense = [t for t in routed if t.config.retrieval.mode != "keyword"]
+            vectors: dict[str, list[list[float] | None]] = {t.kb_id: [None] * len(queries) for t in routed}
+            missing = any((t.config.embedding.provider, t.config.embedding.model, *queries) not in memo for t in dense)
+            if missing:
+                yield {"type": "status", "stage": "embed"}
+            with trace.span("embed") if missing else contextlib.nullcontext():
+                for t in dense:
+                    vectors[t.kb_id] = await self._embed(t.config, queries, memo)
             yield {"type": "status", "stage": "retrieve"}
             with trace.span("retrieve", attempt=attempt) as attributes:
-                result = await self._retrieve_all(queries, vectors, kb, config, reranker, filters, candidates)
+                result = await self._retrieve_all(queries, vectors, routed, config, reranker, filters, candidates)
                 attributes.update(result.funnel, confidence=result.confidence)
             confident = bool(result.selected) and result.confidence >= config.agent.confidence_threshold
             if confident or attempt >= config.agent.max_reformulations or not retry_strategies:
@@ -340,9 +418,8 @@ class Agent:
                 with trace.span("rewrite"):
                     rewritten = await self._complete(llm, config, REWRITE_PROMPT.format(question=question))
                 queries = [rewritten or question]
-                vectors = await self._embed_queries(embed_provider, config, queries) if needs_vector else [None]
-            else:
-                candidates, filters = candidates * 2, None
+            else:  # broaden: more candidates, no filters, every group
+                candidates, filters, routed = candidates * 2, None, targets
 
         trace.funnel, trace.confidence, trace.retries = result.funnel, result.confidence, attempt
         trace.candidates = [c.summary(rank) for rank, c in enumerate(result.ranked[:10], start=1)]
@@ -440,51 +517,65 @@ class Agent:
     async def _retrieve_all(
         self,
         queries: list[str],
-        vectors: list[list[float] | None],
-        kb: dict[str, Any],
+        vectors: dict[str, list[list[float] | None]],
+        targets: list[Target],
         config: KnowledgeBaseConfig,
         reranker: Reranker | None,
         filters: dict[str, Any] | None,
         candidates: int,
     ) -> RetrievalResult:
+        jobs = [(i, target) for i in range(len(queries)) for target in targets]
         results = await asyncio.gather(
             *(
                 retrieve(
-                    query,
-                    vector,
-                    collection=kb["active_collection"],
-                    config=config,
+                    queries[i],
+                    vectors[target.kb_id][i],
+                    collection=target.collection,
+                    config=target.config,
                     index=self.index,
                     reranker=reranker,
                     filters=filters,
                     candidates=candidates,
                 )
-                for query, vector in zip(queries, vectors, strict=True)
+                for i, target in jobs
             )
         )
+        if config.retrieval.groups:  # name the group on each passage, for citations and the prompt
+            for (_, target), result in zip(jobs, results, strict=True):
+                for candidate in result.ranked:
+                    candidate.payload = {**candidate.payload, "group": target.name}
+        # Any group may hold the answer to a question, so the best group sets its confidence.
+        by_query: list[list[RetrievalResult]] = [[] for _ in queries]
+        for (i, _), result in zip(jobs, results, strict=True):
+            by_query[i].append(result)
+        per_query = [self._merge(found, config, config.rerank.top_n, max) for found in by_query]
+        # Every sub-question needs evidence, so the weakest one sets the confidence.
+        return self._merge(per_query, config, config.rerank.top_n * len(queries), min)
+
+    @staticmethod
+    def _merge(
+        results: list[RetrievalResult], config: KnowledgeBaseConfig, top_n: int, confidence: Callable[..., float]
+    ) -> RetrievalResult:
         if len(results) == 1:
             return results[0]
-        best: dict[str, Candidate] = {}
-        for result in results:
-            for candidate in result.selected:
+
+        def best_of(lists: list[list[Candidate]]) -> list[Candidate]:
+            best: dict[str, Candidate] = {}
+            for candidate in (c for found in lists for c in found):
                 if candidate.id not in best or candidate.relevance > best[candidate.id].relevance:
                     best[candidate.id] = candidate
-        ranked = sorted(best.values(), key=lambda c: c.relevance, reverse=True)
+            return sorted(best.values(), key=lambda c: c.relevance, reverse=True)
+
+        pool = best_of([r.selected for r in results])
         if config.context.dedup:
-            ranked = deduplicate(ranked, config.context.near_duplicate_threshold)
-        selected = fit_budget(ranked, config.rerank.top_n * len(queries), config.context.token_budget)
-        funnel = {key: sum(r.funnel.get(key, 0) for r in results) for key in results[0].funnel}
+            pool = deduplicate(pool, config.context.near_duplicate_threshold)
+        selected = fit_budget(pool, top_n, config.context.token_budget)
+        keys = dict.fromkeys(key for r in results for key in r.funnel)
+        funnel = {key: sum(r.funnel.get(key, 0) for r in results) for key in keys}
         funnel["context"] = len(selected)
         funnel["context_tokens"] = sum(estimate_tokens(c.text) for c in selected)
-        # Every sub-question needs evidence, so the weakest one sets the confidence.
-        return RetrievalResult(selected, ranked, funnel, min(r.confidence for r in results))
-
-    async def _embed_queries(
-        self, provider: ModelProvider, config: KnowledgeBaseConfig, queries: list[str]
-    ) -> list[list[float] | None]:
-        if config.retrieval.mode == "keyword":
-            return [None] * len(queries)
-        return list(await provider.embed(config.embedding.model, queries, "query"))
+        ranked = best_of([r.ranked for r in results])  # the closest passages, shown when Archie abstains
+        return RetrievalResult(selected, ranked, funnel, confidence(r.confidence for r in results))
 
     async def _reranker(self, config: KnowledgeBaseConfig, trace: Trace) -> Reranker | None:
         if not config.rerank.enabled:

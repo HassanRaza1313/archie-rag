@@ -170,9 +170,15 @@ function Outcome({ job, kbId }: { job: Job; kbId: string }) {
           </h2>
         </div>
         <p className="mt-2 text-base text-slate">
-          Archie read {formatNumber(Number(summary.documents ?? 0))} documents (
-          {formatNumber(Number(summary.pages ?? 0))} pages) in {formatMs(duration(job.started_at, job.finished_at))} and
-          can now quote {formatNumber(Number(summary.total_chunks ?? 0))} passages from them.
+          {summary.documents ? (
+            <>
+              Archie read {formatNumber(Number(summary.documents))} documents (
+              {formatNumber(Number(summary.pages ?? 0))} pages) in {formatMs(duration(job.started_at, job.finished_at))}{" "}
+              and can now quote {formatNumber(Number(summary.total_chunks ?? 0))} passages from them.
+            </>
+          ) : (
+            "This chatbot has no documents of its own. It answers from the chatbots it also searches."
+          )}
           {job.failures.length > 0 && ` ${job.failures.length} couldn't be read; they're listed below.`}
         </p>
         <Link to={`/kb/${kbId}/ask`} className={cn(buttonClass("primary"), "mt-5")}>

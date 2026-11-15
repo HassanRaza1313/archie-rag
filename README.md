@@ -30,6 +30,8 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
   version, compared side by side, plus an ingestion benchmark (`bench/`) on deliberately hard documents.
 - **Runs on your choice of models.** Claude, OpenAI, Gemini, Ollama or any OpenAI-compatible server, added in
   Preferences with a live check; each chatbot picks its own, and switching is one click.
+- **One front door over many collections.** A chatbot can also search other chatbots; a local router sends each
+  question to the likely ones, searches several when unsure, and shows its reasoning in the trace.
 - **Runs anywhere.** Plain local code, split Docker services, or one all-in-one container. Embedded or server
   Qdrant. Several API processes on one machine, and `rag backup` / `rag restore` for one-file backups.
 

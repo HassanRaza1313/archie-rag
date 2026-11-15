@@ -232,7 +232,9 @@ function Sources({ message, onOpen }: { message: Message; onOpen: (source: Sourc
                   <span className="truncate">{source.file ?? "Document"}</span>
                 </span>
                 <span className="block truncate text-xs text-slate">
-                  {[source.section, pages(source.page_start, source.page_end)].filter(Boolean).join(" · ")}
+                  {[source.group, source.section, pages(source.page_start, source.page_end)]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </span>
               </span>
             </button>
@@ -312,7 +314,7 @@ function QuickLook({ preview, onClose }: { preview: Preview | null; onClose: () 
             <div className="min-w-0 flex-1">
               <div className="truncate text-base font-semibold">{source.file ?? "Document"}</div>
               <div className="truncate text-sm text-slate">
-                {[source.section, pages(source.page_start, source.page_end)].filter(Boolean).join(" · ")}
+                {[source.group, source.section, pages(source.page_start, source.page_end)].filter(Boolean).join(" · ")}
               </div>
             </div>
             <Badge tone="accent">
