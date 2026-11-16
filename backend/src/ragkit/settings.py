@@ -50,6 +50,8 @@ class Settings(BaseModel):
     slo_latency_target: float = Field(0.95, gt=0, lt=1)
     slo_latency_seconds: float = Field(5.0, gt=0)
     slo_window_days: int = Field(7, ge=1, le=90)
+    # Website sources may not reach this machine or private networks unless allowed (an intranet site, say).
+    web_allow_private: bool = False
 
     @property
     def db_path(self) -> Path:

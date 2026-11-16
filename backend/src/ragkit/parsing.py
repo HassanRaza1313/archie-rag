@@ -485,14 +485,29 @@ def parse_text(path: Path, config: ParsingConfig) -> ParsedDocument:
     return ParsedDocument(path.stem, [Block("text", p, 1, 1) for p in paragraphs])
 
 
+_HIDDEN_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?![.\d])", re.IGNORECASE)
+
+
+def _is_hidden(attrs: list[tuple[str, str | None]]) -> bool:
+    values = {name: (value or "") for name, value in attrs}
+    return (
+        "hidden" in values
+        or values.get("aria-hidden", "").lower() == "true"
+        or bool(_HIDDEN_STYLE.search(values.get("style", "")))
+    )
+
+
 class _HtmlBlocks(HTMLParser):
     """Headings, paragraphs, list items and tables from HTML; scripts, styles and page chrome are skipped."""
 
     SKIP = frozenset({"script", "style", "nav", "header", "footer", "noscript", "template", "svg"})
     BREAKS = frozenset({"p", "li", "div", "section", "article", "blockquote", "pre", "dd", "dt", "br", "tr", "table"})
+    VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"})
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
+        self._hidden_tag: str | None = None
+        self._hidden_nest = 0
         self.blocks: list[Block] = []
         self.title = ""
         self._text: list[str] = []
@@ -503,6 +518,12 @@ class _HtmlBlocks(HTMLParser):
         self._cell: list[str] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self._hidden_tag:
+            self._hidden_nest += tag == self._hidden_tag
+            return
+        if tag not in self.VOID and _is_hidden(attrs):  # text a reader never sees can't be trusted (C4)
+            self._hidden_tag, self._hidden_nest = tag, 1
+            return
         if tag in self.SKIP:
             self._skip += 1
         elif tag == "title":
@@ -521,6 +542,12 @@ class _HtmlBlocks(HTMLParser):
             self._flush()
 
     def handle_endtag(self, tag: str) -> None:
+        if self._hidden_tag:
+            if tag == self._hidden_tag:
+                self._hidden_nest -= 1
+                if not self._hidden_nest:
+                    self._hidden_tag = None
+            return
         if tag in self.SKIP:
             self._skip = max(0, self._skip - 1)
         elif tag == "title":
@@ -542,7 +569,7 @@ class _HtmlBlocks(HTMLParser):
             self._flush()
 
     def handle_data(self, data: str) -> None:
-        if self._skip:
+        if self._skip or self._hidden_tag:
             return
         if self._in_title:
             self.title += data

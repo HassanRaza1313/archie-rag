@@ -11,6 +11,9 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
 - **Bounded agent.** Condenses follow-ups, retries weak retrievals with a rewritten or broader search, abstains with
   the closest passages instead of guessing, and checks each sentence of an answer against the passage it cites
   with a small local model, marking any the sources don't back.
+- **A folder, uploads or a website.** A website source reads a site's pages and the documents they link to,
+  honours robots.txt and never reaches private addresses; any source can check for changes on a schedule, reading
+  only what changed. Wording aimed at an AI (prompt injection) is flagged, and removed from web pages.
 - **Reads what you actually have.** PDF, Word, PowerPoint, Excel, CSV, JSON, email, EPUB, OpenDocument, HTML,
   Markdown and text; images through OCR; audio and video transcribed on your own machine, cited by timestamp.
   A fast text reader
@@ -62,7 +65,7 @@ style → **Create**. Archie builds it and opens Ask. Requirements, every comman
 ## Development
 
 ```bash
-cd backend && .venv/bin/python -m pytest          # 250 tests; ruff + mypy configured in pyproject.toml
+cd backend && .venv/bin/python -m pytest          # 265 tests; ruff + mypy configured in pyproject.toml
 cd frontend && npm test && npm run lint && npm run typecheck
 ```
 

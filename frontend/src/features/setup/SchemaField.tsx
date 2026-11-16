@@ -183,7 +183,7 @@ export function SchemaField({
           value={String(value ?? "")}
           aria-describedby={hintId}
           onChange={(e) => onChange(e.target.value)}
-          className="w-64"
+          className="w-64 max-w-full"
         >
           {field.options.map((option) => (
             <option key={option} value={option}>
@@ -294,7 +294,7 @@ export function SchemaField({
             value={String(value ?? "")}
             onChange={(e) => onChange(e.target.value)}
             list={MODEL_FIELDS.has(path) ? `${id}-models` : undefined}
-            className={cn("max-w-xl", field.key === "path" || MODEL_FIELDS.has(path) ? "font-mono" : "")}
+            className={cn("max-w-xl", ["path", "url"].includes(field.key) || MODEL_FIELDS.has(path) ? "font-mono" : "")}
           />
           {MODEL_FIELDS.has(path) && provider && <ModelSuggestions provider={provider} id={`${id}-models`} />}
         </>

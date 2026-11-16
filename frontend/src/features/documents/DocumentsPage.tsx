@@ -42,6 +42,10 @@ function problems(document: IndexedDocument): string[] {
   if (report.layout_hints?.length && report.reader === "fast")
     notes.unshift(`Complex layout (${report.layout_hints.join(", ")}) read with the text reader`);
   if (report.duplicates) notes.push(`${report.duplicates} passages repeated another file and were skipped`);
+  if (report.flagged)
+    notes.push(
+      `${report.flagged === 1 ? "1 passage has" : `${report.flagged} passages have`} wording aimed at an AI; from websites it is removed`,
+    );
   return notes;
 }
 
@@ -132,6 +136,7 @@ function ChunkCard({ kbId, uri, chunk }: { kbId: string; uri: string; chunk: Doc
     chunk.content_type === "table" ? "Table" : null,
     pages(chunk.page_start, chunk.page_end),
     excluded ? "Left out of search" : chunk.edited ? "Edited" : null,
+    chunk.flagged ? `Wording aimed at an AI: “${chunk.flagged}”` : null,
   ]
     .filter(Boolean)
     .join(" · ");

@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { Check, FolderOpen, Upload } from "lucide-react";
+import { Check, FolderOpen, Globe, Upload } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, cn, ErrorNote, Input } from "../../components/ui";
@@ -66,7 +66,8 @@ export function NewChatbotPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
-  const [source, setSource] = useState<"folder" | "uploads">("folder");
+  const [source, setSource] = useState<"folder" | "uploads" | "website">("folder");
+  const [site, setSite] = useState("");
   const [folder, setFolder] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [preset, setPreset] = useState("balanced");
@@ -75,7 +76,12 @@ export function NewChatbotPage() {
   const [problems, setProblems] = useState<string[]>([]);
 
   const chosen: Config = {
-    source: source === "uploads" ? { type: "uploads" } : { type: "local_folder", path: folder },
+    source:
+      source === "uploads"
+        ? { type: "uploads" }
+        : source === "website"
+          ? { type: "website", url: site.trim(), sync_hours: 24 } // websites change: check daily
+          : { type: "local_folder", path: folder },
     ...(models.embedding && { embedding: models.embedding }),
     ...(models.generation && { generation: models.generation }),
   };
@@ -112,7 +118,13 @@ export function NewChatbotPage() {
     onSuccess: (to) => to && navigate(to),
   });
 
-  const valid = [name.trim().length > 0, source === "folder" ? folder.trim().length > 0 : files.length > 0, true];
+  const sourceChosen =
+    source === "folder"
+      ? folder.trim().length > 0
+      : source === "website"
+        ? /^https?:\/\/\S+\.\S+/.test(site.trim())
+        : files.length > 0;
+  const valid = [name.trim().length > 0, sourceChosen, true];
   const last = step === STEPS.length - 1;
 
   return (
@@ -188,9 +200,38 @@ export function NewChatbotPage() {
                 title="Upload files"
                 body="Pick files from this device. Good for a handful of documents."
               />
+              <Choice
+                name="source"
+                checked={source === "website"}
+                onSelect={() => setSource("website")}
+                icon={<Globe />}
+                title="A website"
+                body="Its pages and the documents they link to. Archie checks for changes every day."
+              />
             </fieldset>
             {source === "folder" ? (
               <FolderPicker value={folder} onChange={setFolder} />
+            ) : source === "website" ? (
+              <div className="mt-5">
+                <label htmlFor="site" className="text-sm font-medium">
+                  Start page or sitemap
+                </label>
+                <Input
+                  id="site"
+                  type="url"
+                  inputMode="url"
+                  autoComplete="url"
+                  spellCheck={false}
+                  placeholder="https://example.com/help/"
+                  value={site}
+                  onChange={(e) => setSite(e.target.value)}
+                  className="mt-1.5 font-mono"
+                />
+                <p className="mt-1.5 text-xs text-slate">
+                  Pages under this address on the same site are read, up to 200. Sentences that read like instructions
+                  to an AI are removed.
+                </p>
+              </div>
             ) : (
               <div className="mt-5">
                 <label className="press inline-flex h-8 cursor-default items-center gap-2 rounded-[var(--radius-control)] bg-panel px-3.5 text-sm font-medium shadow-[0_0_0_0.5px_var(--color-rule-strong),0_1px_1px_rgb(0_0_0/0.06)] hover:bg-plinth">

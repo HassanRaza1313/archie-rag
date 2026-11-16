@@ -37,6 +37,18 @@ const PRESET_NAMES: Record<string, string> = {
   low_latency: "Fastest",
 };
 
+/** Source settings that only apply to some source types; every other field shows for all of them. */
+const SOURCE_FIELDS_FOR: Record<string, string[]> = {
+  path: ["local_folder"],
+  recursive: ["local_folder", "uploads"],
+  url: ["website"],
+  max_pages: ["website"],
+};
+
+export function sourceFieldShown(key: string, sourceType: string): boolean {
+  return SOURCE_FIELDS_FOR[key]?.includes(sourceType) ?? true;
+}
+
 function UploadPanel({ kbId }: { kbId: string }) {
   const queryClient = useQueryClient();
   const uploads = useQuery({ queryKey: ["uploads", kbId], queryFn: () => api.uploads(kbId) });
@@ -280,8 +292,10 @@ export function SetupPage() {
 
   const stage = stages.find((item) => item.key === activeStage) ?? stages[0];
   if (!stage) return null;
-  const essentials = stage.fields.filter((field) => field.tier === "essential");
-  const advanced = stage.fields.filter((field) => field.tier === "advanced");
+  const sourceType = String(getField(draft, "source", "type") ?? "");
+  const shown = stage.fields.filter((field) => field.stage !== "source" || sourceFieldShown(field.key, sourceType));
+  const essentials = shown.filter((field) => field.tier === "essential");
+  const advanced = shown.filter((field) => field.tier === "advanced");
   const field = (item: FieldSpec) => (
     <SchemaField
       key={item.key}

@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ragkit.config import FILE_TYPES, SourceConfig
 from ragkit.settings import Settings
+from ragkit.web import WebError, crawl_site
 
 
 class SourceError(ValueError):
@@ -106,4 +107,10 @@ SOURCES: dict[str, Callable[[Path, SourceConfig], Iterator[DocumentRef]]] = {
 
 
 def discover(config: SourceConfig, settings: Settings, kb_id: str) -> list[DocumentRef]:
+    if config.type == "website":
+        try:
+            pages = crawl_site(config, settings.state_dir / "web" / kb_id, settings.web_allow_private)
+        except WebError as exc:
+            raise SourceError(str(exc)) from exc
+        return [DocumentRef(uri=url, path=path, size=path.stat().st_size) for url, path in pages]
     return list(SOURCES[config.type](resolve_root(config, settings, kb_id), config))

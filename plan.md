@@ -171,7 +171,8 @@ passage it cites, by default; unbacked sentences are marked, and abstain mode re
 answer, shared pages too; Status lists the most asked unanswered or unhelpful questions); G3 golden sets drafted for you (done: drafted
 from the documents, kept per chatbot, re-run after every rebuild or settings save, each question marked better or
 worse); F4 connectors with incremental sync (Jira, Confluence, SharePoint/OneDrive, S3, Google
-Drive, read-only databases, websites) that keep their fields as structured data; F5 structured answers (filters and
+Drive, read-only databases, websites) that keep their fields as structured data (started: scheduled sync for every
+source and the website source are done, with C4; the account-based connectors and H2 follow); F5 structured answers (filters and
 counts from fields) and an entity layer; F6 optional graph expansion. Postgres, the load test and single sign-on
 follow F4. The order was refined by the ideas review in §11.
 
@@ -203,7 +204,7 @@ server-side sessions, an audit log). Next for A2: single sign-on (OpenID Connect
 | C Security and privacy | C1 Hashed, rotatable keys stored in the database | Keys live in environment variables |
 | | C2 Retention and erasure: question storage off, redacted or full per chatbot; export; delete purges everything | GDPR erasure and minimisation |
 | | C3 Access filters that can never be dropped (per-document permissions) | Needed before connectors bring permissions; the broaden retry drops user filters by design |
-| | C4 Prompt-injection defences for untrusted sources: hidden text stripped, instruction-like passages flagged | Connectors and web pages are untrusted |
+| | C4 (done) Prompt-injection defences for untrusted sources: hidden text stripped, instruction-like passages flagged | Connectors and web pages are untrusted |
 | | C5 Dependency and image scanning in CI (pip-audit, npm audit, Trivy), SBOM | Supply chain |
 | D Reads everything | D1 Images (PNG, JPEG, TIFF, WebP) through OCR | Scans and screenshots are common |
 | | D2 Audio and video through local transcription (faster-whisper), timestamps cited like pages | Meetings, calls, lectures |
@@ -231,8 +232,9 @@ then B1 and B2, then E.
 | 11 | Python 3.10 reached end of life, and the patched filelock and Pillow no longer support it | Python 3.11+; filelock 4.2.9, Pillow 13 |
 | 12 | No dependency scanning | pip-audit and npm audit in CI, plus header and log-redaction smoke tests of the images |
 
-Still open: Postgres for several machines (B1), single sign-on, and prompt-injection screening for untrusted
-sources (C4, before connectors).
+Still open: Postgres for several machines (B1) and single sign-on. Prompt-injection screening for untrusted
+sources (C4) is done: hidden page text is never read, and wording aimed at an AI is flagged, and removed from
+websites.
 
 ## 11. Ideas review: what a better RAGFlow needs (November 2026)
 
@@ -278,4 +280,4 @@ evaluation per config version, backups, and keys and settings exported as YAML.
 - Answer-style templates (comparison, table extractor): the presets and chunking templates cover them.
 
 **Order:** F3 groups and router (done); G1, G2 and G3 (done; they measure quality before connectors bring volume); F4 connectors
-with C4 and H2; H1 and E1; G4, G5; F5 with spreadsheet tables; H3 to H8 as they fit; then G6, B1 Postgres, SSO, F6.
+with C4 and H2 (in progress: sync, website source and C4 done); H1 and E1; G4, G5; F5 with spreadsheet tables; H3 to H8 as they fit; then G6, B1 Postgres, SSO, F6.

@@ -18,7 +18,11 @@ SOURCES["s3"] = discover_s3
 
 Add `"s3"` to `SourceConfig.type`'s `Literal`, and any options (bucket, region) as fields on `SourceConfig` with
 `option(...)` so they appear in the UI with help text. `uri` must be stable across runs: incremental builds and
-reconciliation key on it.
+reconciliation key on it. The website source (`web.py`) is the worked example of a remote source: it fetches into
+`state_dir/web/<chatbot>`, uses the page address as `uri` (citations then show it), drops cached files that are
+gone, and is listed in `SOURCE_FIELDS_FOR` in `SetupPage.tsx` so Settings shows only its fields. Treat remote
+content as untrusted: `jobs.py` screens it with `injection.py`, and any network access needs the same
+private-address guard as `web.check_address`. `source.sync_hours` schedules every source type without extra code.
 
 ## A file format
 

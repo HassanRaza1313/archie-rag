@@ -347,6 +347,7 @@ export interface DocumentReport {
   warnings?: string[];
   chunks_produced?: number;
   duplicates?: number;
+  flagged?: number;
   edited?: number;
   quality?: number;
 }
@@ -371,6 +372,8 @@ export interface DocumentChunk {
   token_count: number;
   enrichment: { context: string; questions: string[]; keywords: string[] } | null;
   excluded: boolean | null;
+  /** Wording that looks like instructions to an AI (prompt-injection screening). */
+  flagged: string | null;
   edited: boolean;
 }
 

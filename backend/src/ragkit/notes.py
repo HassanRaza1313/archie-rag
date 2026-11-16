@@ -12,6 +12,17 @@ NOTES: dict[str, dict[str, str]] = {
     "source.type": {
         "local_folder": "Reads a folder on the server and picks up changes at every rebuild.",
         "uploads": "Uses files uploaded in the app. Best for a handful of documents; nothing outside Archie changes.",
+        "website": "Reads a website's pages and linked documents. Web pages are untrusted: sentences that read like "
+        "instructions to an AI are removed, and you can restore them on the Documents page.",
+    },
+    "source.url": {"*": "The next build reads this site. Pages outside the start page's folder are not followed."},
+    "source.max_pages": {
+        "up": "Reads more of the site: builds take longer.",
+        "down": "Faster builds; pages past the limit are left out.",
+    },
+    "source.sync_hours": {
+        "up": "Checks less often: changes on the source take longer to show up.",
+        "down": "Checks more often: answers stay current, at the cost of more reading.",
     },
     "source.recursive": {
         "true": "Includes every subfolder.",

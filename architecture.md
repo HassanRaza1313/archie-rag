@@ -43,7 +43,9 @@ backend/src/ragkit/
   storage.py      SQLite: knowledge bases, config versions, jobs, indexed docs, traces, answer cache
   providers.py    Ollama, OpenAI-compatible, Claude (official SDK); FastEmbed embeddings and reranker
   connections.py  model connections added in the app; keys encrypted at rest
-  sources.py      data sources (local folder, uploads) with the data-root allowlist
+  sources.py      data sources (local folder, uploads, website) with the data-root allowlist
+  web.py          website source: crawls one site into a cache, refusing private addresses
+  injection.py    flags wording aimed at an AI (prompt injection) in indexed passages
   parsing.py      PDF (pdfium text + pdfplumber tables + optional OCR), Markdown, text
   chunking.py     structure-aware and fixed chunking
   textutil.py     token estimate, sentences, BM25 terms, shingles
@@ -310,6 +312,17 @@ Passages sent to a remote model while drafting are redacted as for answers (`pri
 - PII detectors are regex candidates confirmed by validators: Luhn (cards), mod-97 (IBAN), IP parsing, phone
   formats (international or national, ISBN excluded), US SSN, PK CNIC, UK NINO. Placeholders are numbered
   consistently per request (`[REDACTED_EMAIL_1]`). Logged queries are always redacted.
+- Website sources (`web.py`): http(s) only; every request and redirect is refused when the host resolves to
+  loopback, private, link-local or other non-public addresses (cloud metadata included) unless
+  `RAG_WEB_ALLOW_PRIVATE` is set for an intranet; redirects may not leave the site; 20 MB per page; robots.txt and
+  its crawl delay (up to 5 s) honoured. Known limit: the name is resolved again on connect, so DNS rebinding is
+  not prevented; sources are editable only by editors.
+- Prompt injection (C4, `injection.py`): text hidden on a page (`hidden`, `aria-hidden`, `display:none`,
+  `visibility:hidden`, zero font size) is never read. Passages with wording aimed at an AI ("ignore all previous
+  instructions", "note to the AI", chat-template tokens) are flagged on the Documents page; from websites those
+  sentences are removed before indexing (the passage is left out only when nothing else remains), and an owner's
+  edit or "Use in search" always wins. The system prompt tells the model that sources are material, not
+  instructions.
 - nginx adds CSP, `X-Frame-Options: DENY`, `nosniff`, `no-referrer`. Images run as a non-root user; source mounts
   are read-only; versions are pinned and Python dependencies locked (`uv.lock`).
 

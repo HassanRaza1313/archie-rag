@@ -33,6 +33,7 @@ class Chunk:
     tokens: int
     template: str = "structure"
     excluded: bool = False
+    flagged: str | None = None  # wording that looks like instructions to an AI (injection.py)
 
 
 @dataclass

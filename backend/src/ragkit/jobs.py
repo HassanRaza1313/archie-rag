@@ -32,12 +32,13 @@ from ragkit.enrichment import Enrichment, enrich_chunks
 from ragkit.evaluation import rerun
 from ragkit.formats import MEDIA_TYPES
 from ragkit.index import VectorIndex, collection_name, point_id
+from ragkit.injection import looks_like_instructions, strip_instructions
 from ragkit.parsing import ParsedDocument, parse_document
 from ragkit.privacy import Redactor
 from ragkit.providers import ProviderRegistry
 from ragkit.settings import Settings
 from ragkit.sources import DocumentRef, SourceError, discover
-from ragkit.storage import MEMORY_TTL_S, RATE_WINDOW_MAX_S, TERMINAL_JOB_STATES, Database
+from ragkit.storage import MEMORY_TTL_S, RATE_WINDOW_MAX_S, TERMINAL_JOB_STATES, Database, JobConflictError
 from ragkit.telemetry import request_id_var
 from ragkit.textutil import bm25_document_vector, bm25_query_vector
 
@@ -183,7 +184,7 @@ class Builder:
         embedder = self.providers.get(config.embedding.provider)
 
         tracker.start("validate")
-        refs = discover(config.source, self.settings, kb_id)
+        refs = await asyncio.to_thread(discover, config.source, self.settings, kb_id)  # a website crawls here
         if not refs and not config.retrieval.groups:  # a chatbot that only searches others needs no files
             raise BuildFailedError("the source contains no supported files")
         try:
@@ -436,11 +437,21 @@ class Builder:
         edits = self.db.chunk_edits(kb_id, ref.uri, content_hash)
         kept: list[Chunk] = []
         duplicates = 0
+        untrusted = config.source.type == "website"
         for chunk in chunks:
             edit = edits.get(chunk.ordinal)
             if edit and edit["text"]:
                 chunk.embed_text = chunk.embed_text.replace(chunk.text, edit["text"])
                 chunk.text = edit["text"]
+            chunk.flagged = looks_like_instructions(chunk.text)
+            if edit:  # the owner's choice wins over screening
+                chunk.excluded = edit["excluded"]
+            elif chunk.flagged and untrusted:  # drop the sentences that talk to an AI; keep the rest of the passage
+                if clean := strip_instructions(chunk.text):
+                    chunk.embed_text = chunk.embed_text.replace(chunk.text, clean)
+                    chunk.text = clean
+                else:
+                    chunk.excluded = True
             # shortcut: duplicates are found within one build; an unchanged file indexed earlier is not compared.
             digest = hashlib.sha1(" ".join(chunk.text.lower().split()).encode(), usedforsecurity=False).hexdigest()
             if seen.setdefault(digest, ref.uri) != ref.uri and chunk.tokens >= 8:
@@ -480,9 +491,6 @@ class Builder:
             await asyncio.to_thread(self.index.upsert, collection, points[start : start + 256])
         tracker.add("index", items_in=len(points), items_out=len(points))
         templates = Counter(chunk.template for chunk in chunks)
-        for chunk in chunks:
-            if (edit := edits.get(chunk.ordinal)) and edit["excluded"]:
-                chunk.excluded = True
         report = {
             "reader": parsed.reader,
             "template": templates.most_common(1)[0][0] if templates else None,
@@ -494,6 +502,7 @@ class Builder:
             "chunks_produced": produced,
             "duplicates": duplicates,
             "edited": len(edits),
+            "flagged": sum(bool(chunk.flagged) for chunk in chunks),
             "quality": parse_quality(parsed, chunks),
         }
         self.db.record_document(collection, ref.uri, content_hash, len(chunks), report)
@@ -512,7 +521,7 @@ class Builder:
         payload = {
             "kb_id": kb_id,
             "document_uri": ref.uri,
-            "file_name": ref.path.name,
+            "file_name": ref.uri.split("://", 1)[1] if "://" in ref.uri else ref.path.name,  # a page: its address
             "file_type": ref.path.suffix.lower().lstrip("."),
             "title": parsed.title,
             "section": chunk.section,
@@ -526,6 +535,8 @@ class Builder:
             "ingested_at": time.time(),
             "text": chunk.text,
         }
+        if chunk.flagged:
+            payload["flagged"] = chunk.flagged
         if chunk.excluded:
             payload["excluded"] = True
         if enrichment.search_text():
@@ -584,12 +595,13 @@ def _percentile(values: list[int], pct: int) -> int:
 
 
 AUDIT_RETENTION_DAYS = 365  # the change history keeps a year
+SYNC_CHECK_S = 60  # how often an idle worker looks for scheduled updates
 
 
 async def run_worker(builder: Builder, poll_s: float = 1.0, stop: asyncio.Event | None = None) -> None:
     """Claim and run queued builds until ``stop`` is set; periodically purge expired traces."""
     stop = stop or asyncio.Event()
-    last_purge = 0.0
+    last_purge = last_sync = 0.0
     while not stop.is_set():
         job = await asyncio.to_thread(builder.db.claim_job)
         if job is not None:
@@ -604,8 +616,37 @@ async def run_worker(builder: Builder, poll_s: float = 1.0, stop: asyncio.Event 
         if time.time() - last_purge > 3600:
             purge_traces(builder.db)
             last_purge = time.time()
+        if time.time() - last_sync > SYNC_CHECK_S:
+            await asyncio.to_thread(queue_due_syncs, builder.db)
+            last_sync = time.time()
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=poll_s)
+
+
+def queue_due_syncs(db: Database, now: float | None = None) -> list[str]:
+    """Queue an incremental build for each built chatbot whose ``source.sync_hours`` have passed since its last
+    build finished. Several workers may call this at once: ``create_job`` refuses a second job per chatbot."""
+    now = time.time() if now is None else now
+    queued = []
+    for kb in db.list_kbs():
+        if not kb["active_collection"]:
+            continue  # the first build is the owner's to start
+        _, config = db.get_config(kb["id"])
+        if not config.source.sync_hours:
+            continue
+        last = db.list_jobs(kb["id"], limit=1)
+        if last and not is_terminal(last[0]["status"]):
+            continue
+        finished = (last[0]["finished_at"] or last[0]["created_at"]) if last else 0.0
+        if now - finished < config.source.sync_hours * 3600:
+            continue
+        try:
+            db.create_job(kb["id"], kb["active_version"], BUILD_STAGES)
+            queued.append(kb["id"])
+            logger.info("queued a scheduled update for %s", kb["id"])
+        except JobConflictError:
+            pass
+    return queued
 
 
 def purge_traces(db: Database) -> None:

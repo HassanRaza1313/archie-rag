@@ -76,6 +76,7 @@ from ragkit.sources import SourceError, discover, list_folders, resolve_root
 from ragkit.storage import Database, JobConflictError
 from ragkit.telemetry import request_id_var
 from ragkit.textutil import bm25_document_vector, estimate_tokens
+from ragkit.web import WebError, probe_site
 
 logger = logging.getLogger(__name__)
 access_logger = logging.getLogger("ragkit.access")
@@ -855,6 +856,7 @@ def create_app(
             "token_count",
             "enrichment",
             "excluded",
+            "flagged",
         )
         chunks = [{key: row.get(key) for key in keys} | {"edited": row.get("ordinal") in edits} for row in rows]
         return {"uri": uri, "title": rows[0].get("title"), "chunks": chunks}
@@ -1068,22 +1070,30 @@ async def _validate(context: AppContext, kb: dict[str, Any], config: KnowledgeBa
     checks: dict[str, Any] = {}
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, str]] = []
-    try:
-        refs = await asyncio.to_thread(discover, config.source, context.settings, kb["id"])
-        by_type: dict[str, int] = {}
-        for ref in refs:
-            by_type[ref.path.suffix.lower()] = by_type.get(ref.path.suffix.lower(), 0) + 1
-        checks["source"] = {
-            "ok": bool(refs),
-            "files": len(refs),
-            "by_type": by_type,
-            "megabytes": round(sum(r.size for r in refs) / 1e6, 2),
-        }
-        if not refs and not config.retrieval.groups:
-            warnings.append({"stage": "source", "msg": "This folder has no supported files yet."})
-    except SourceError as exc:
-        checks["source"] = {"ok": False}
-        errors.append({"loc": ["source", "path"], "msg": str(exc)})
+    if config.source.type == "website":  # a crawl is a build's job; here only the start page is checked
+        try:
+            await asyncio.to_thread(probe_site, config.source, context.settings.web_allow_private)
+            checks["source"] = {"ok": True, "files": None, "by_type": {}, "megabytes": None}
+        except WebError as exc:
+            checks["source"] = {"ok": False}
+            errors.append({"loc": ["source", "url"], "msg": str(exc)})
+    else:
+        try:
+            refs = await asyncio.to_thread(discover, config.source, context.settings, kb["id"])
+            by_type: dict[str, int] = {}
+            for ref in refs:
+                by_type[ref.path.suffix.lower()] = by_type.get(ref.path.suffix.lower(), 0) + 1
+            checks["source"] = {
+                "ok": bool(refs),
+                "files": len(refs),
+                "by_type": by_type,
+                "megabytes": round(sum(r.size for r in refs) / 1e6, 2),
+            }
+            if not refs and not config.retrieval.groups:
+                warnings.append({"stage": "source", "msg": "This folder has no supported files yet."})
+        except SourceError as exc:
+            checks["source"] = {"ok": False}
+            errors.append({"loc": ["source", "path"], "msg": str(exc)})
 
     office = sum(
         count for suffix, count in checks.get("source", {}).get("by_type", {}).items() if suffix in LAYOUT_ONLY

@@ -232,6 +232,10 @@ gets less unrelated text. Enrichment is not in this table: it needs a chat model
 - Services bind to 127.0.0.1 and Docker publishes on 127.0.0.1. To expose them, set `RAG_PUBLISH_HOST`
   **and** `RAG_API_KEY`. A local non-loopback bind without a key is refused.
 - Source folders must be inside `RAG_DATA_ROOTS`; the setup assistant's folder picker only lists those.
+- Website sources can't reach this machine or private networks. To index an intranet site, set
+  `RAG_WEB_ALLOW_PRIVATE=true` (only if everyone who can edit chatbots may also reach those addresses).
+- `source.sync_hours` re-reads a source on a schedule (new chatbots from a website check daily); only new and
+  changed documents are read again. The worker checks once a minute.
 - Share links are random 24-character tokens that allow questions to one chatbot only, rate-limited per visitor.
   Behind the HTTPS profile, the visitor's address comes from the proxy chain (nginx believes `X-Forwarded-For` only
   from private networks). Deleting a chatbot deletes its uploads and cached answers.
