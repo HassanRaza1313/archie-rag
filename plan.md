@@ -168,7 +168,9 @@ per assistant with a question router (done: a chatbot also searches other chatbo
 index; a local naive Bayes router picks the likely ones, searches several when unsure, and a front door needs no
 files of its own); G1 claim check (done: a local entailment model checks each answer sentence against the
 passage it cites, by default; unbacked sentences are marked, and abstain mode replaces mostly unbacked answers); G2 feedback and gaps (done: thumbs up or down on every
-answer, shared pages too; Status lists the most asked unanswered or unhelpful questions); F4 connectors with incremental sync (Jira, Confluence, SharePoint/OneDrive, S3, Google
+answer, shared pages too; Status lists the most asked unanswered or unhelpful questions); G3 golden sets drafted for you (done: drafted
+from the documents, kept per chatbot, re-run after every rebuild or settings save, each question marked better or
+worse); F4 connectors with incremental sync (Jira, Confluence, SharePoint/OneDrive, S3, Google
 Drive, read-only databases, websites) that keep their fields as structured data; F5 structured answers (filters and
 counts from fields) and an entity layer; F6 optional graph expansion. Postgres, the load test and single sign-on
 follow F4. The order was refined by the ideas review in §11.
@@ -246,7 +248,7 @@ evaluation per config version, backups, and keys and settings exported as YAML.
 |---|---|---|
 | G1 Claim check (done) | Split each answer into cited sentences; a small local entailment (NLI) model checks each against its passage; unsupported sentences are flagged or removed; a support score per answer | The strongest anti-hallucination step, local and cheap; today's check is whole-answer (citations exist, or one LLM call) |
 | G2 Feedback and gaps (done) | Thumbs up/down on answers (shared pages too); Health lists the most asked unanswered questions, which show what the documents lack | Cheap, and tells owners what to add |
-| G3 Golden set drafted for you | Draft questions from the documents (enrichment already writes them), people keep or edit them; the set re-runs when settings are saved and shows what got better or worse | Turns F2's notes into measured results; removes the hardest step of evaluation |
+| G3 Golden set drafted for you (done) | Draft questions from the documents (enrichment already writes them), people keep or edit them; the set re-runs when settings are saved and shows what got better or worse | Turns F2's notes into measured results; removes the hardest step of evaluation |
 | G4 Show in document | A citation opens the original page with the passage highlighted (positions from the PDF text layer or the layout reader) | The most trusted way to show evidence |
 | G5 Source dates | Citations show each document's date; old ones are marked; a newer conflicting source is preferred and noted | Stale policies are a common wrong answer |
 | G6 Replay | Re-ask a past question on another settings version or model and compare side by side | Pairs with changing components on the go |
@@ -275,5 +277,5 @@ evaluation per config version, backups, and keys and settings exported as YAML.
 - Sampling live traffic with an LLM judge: costly; G1 scores every answer locally instead.
 - Answer-style templates (comparison, table extractor): the presets and chunking templates cover them.
 
-**Order:** F3 groups and router (done); G1 (done), G2 (done), G3 (they measure quality before connectors bring volume); F4 connectors
+**Order:** F3 groups and router (done); G1, G2 and G3 (done; they measure quality before connectors bring volume); F4 connectors
 with C4 and H2; H1 and E1; G4, G5; F5 with spreadsheet tables; H3 to H8 as they fit; then G6, B1 Postgres, SSO, F6.

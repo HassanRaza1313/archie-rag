@@ -1,27 +1,41 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, Trash2, Upload } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, Sparkles, Trash2, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Button, cn, ErrorNote, Group, Input, PageHeader, Row, Select, TextArea } from "../../components/ui";
-import { api, type EvalReport } from "../../lib/api";
+import { Badge, Button, cn, ErrorNote, Group, Input, PageHeader, Row, Select, TextArea } from "../../components/ui";
+import { api, type EvalReport, type EvalRun, type GoldenItem } from "../../lib/api";
 import { formatMs, formatPercent, relativeTime } from "../../lib/format";
 
-type QuestionRow = { id: string; question: string; expected: string };
-type Run = EvalReport & { runId: number; ranAt: number };
+type QuestionRow = { id: string; question: string; expected: string; drafted?: boolean };
+type Result = EvalReport["results"][number];
 
-const SAMPLE: QuestionRow[] = [
-  {
-    id: crypto.randomUUID(),
-    question: "What ratio of browns to greens should a compost pile have?",
-    expected: "home-composting-guide.md",
-  },
-  {
-    id: crypto.randomUUID(),
-    question: "How many days of paid leave do employees get?",
-    expected: "remote-team-handbook.md",
-  },
-  { id: crypto.randomUUID(), question: "Who won the 1998 football world cup?", expected: "" },
-];
+const toRow = (item: GoldenItem, drafted = false): QuestionRow => ({
+  id: crypto.randomUUID(),
+  question: item.question,
+  expected: item.expected_sources[0] ?? "",
+  drafted,
+});
+
+const toItem = (row: QuestionRow): GoldenItem => ({
+  question: row.question.trim(),
+  expected_sources: row.expected.trim() ? [row.expected.trim()] : [],
+});
+
+/** Whether a question got the outcome it should: the expected document in the top 5, or a decline. */
+export function passed(result: Result): boolean {
+  return result.answerable ? result.rank !== null && result.rank <= 5 && !result.abstained : result.abstained;
+}
+
+/** Per question, "better" or "worse" against the previous run; unchanged and new questions are left out. */
+export function changes(latest: EvalReport, previous: EvalReport | undefined): Map<string, "better" | "worse"> {
+  const before = new Map((previous?.results ?? []).map((result) => [result.question, passed(result)]));
+  const changed = new Map<string, "better" | "worse">();
+  for (const result of latest.results) {
+    const was = before.get(result.question);
+    if (was !== undefined && was !== passed(result)) changed.set(result.question, was ? "worse" : "better");
+  }
+  return changed;
+}
 
 type MetricKey = keyof EvalReport["metrics"] & string;
 const METRICS: {
@@ -92,15 +106,7 @@ export function parseGolden(text: string): { items: unknown[]; error?: string } 
   return items.length ? { items } : { items, error: "add at least one question" };
 }
 
-function loadRuns(kbId: string): Run[] {
-  try {
-    return JSON.parse(localStorage.getItem(`archie.eval.${kbId}`) ?? "[]") as Run[];
-  } catch {
-    return [];
-  }
-}
-
-function best(runs: Run[], metric: (typeof METRICS)[number]): number | null {
+function best(runs: EvalRun[], metric: (typeof METRICS)[number]): number | null {
   const values = runs.map((run) => run.metrics[metric.key]).filter((v): v is number => typeof v === "number");
   if (values.length < 2) return null;
   return metric.higherIsBetter ? Math.max(...values) : Math.min(...values);
@@ -108,42 +114,66 @@ function best(runs: Run[], metric: (typeof METRICS)[number]): number | null {
 
 export function EvalPage() {
   const { kbId = "" } = useParams();
+  const queryClient = useQueryClient();
   const versions = useQuery({ queryKey: ["versions", kbId], queryFn: () => api.versions(kbId) });
-  const [rows, setRows] = useState<QuestionRow[]>(SAMPLE);
-  const [version, setVersion] = useState("");
-  const [runs, setRuns] = useState<Run[]>(() => loadRuns(kbId));
-  const [fileError, setFileError] = useState<string | null>(null);
-  useEffect(() => {
-    try {
-      localStorage.setItem(`archie.eval.${kbId}`, JSON.stringify(runs));
-    } catch {
-      /* storage unavailable */
-    }
-  }, [runs, kbId]);
-
-  const filled = rows.filter((row) => row.question.trim());
-  const run = useMutation({
-    mutationFn: () =>
-      api.evaluate(
-        kbId,
-        filled.map((row) => ({
-          question: row.question.trim(),
-          expected_sources: row.expected.trim() ? [row.expected.trim()] : [],
-        })),
-        version ? Number(version) : undefined,
-      ),
-    onSuccess: (report) =>
-      setRuns((current) => [{ ...report, runId: Date.now(), ranAt: Date.now() / 1000 }, ...current].slice(0, 6)),
+  const golden = useQuery({ queryKey: ["golden", kbId], queryFn: () => api.golden(kbId) });
+  const history = useQuery({
+    queryKey: ["eval-runs", kbId],
+    queryFn: () => api.evalRuns(kbId),
+    refetchInterval: 15_000,
   });
+  const [rows, setRows] = useState<QuestionRow[] | null>(null);
+  const [version, setVersion] = useState("");
+  const [fileError, setFileError] = useState<string | null>(null);
+  const loadedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (golden.data && loadedFor.current !== kbId) {
+      loadedFor.current = kbId;
+      setRows(golden.data.items.map((item) => toRow(item)));
+    }
+  }, [golden.data, kbId]);
+
+  const filled = (rows ?? []).filter((row) => row.question.trim());
+  const save = useMutation({ mutationFn: (items: GoldenItem[]) => api.saveGolden(kbId, items) });
+  const serialized = JSON.stringify(filled.map(toItem));
+  const lastSaved = useRef<string | null>(null);
+  useEffect(() => {
+    if (rows === null) return;
+    if (lastSaved.current === null) {
+      lastSaved.current = serialized; // what was just loaded is already saved
+      return;
+    }
+    if (serialized === lastSaved.current) return;
+    const timer = setTimeout(() => {
+      lastSaved.current = serialized;
+      save.mutate(JSON.parse(serialized) as GoldenItem[]);
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [serialized, rows, save.mutate]);
+
+  const draft = useMutation({
+    mutationFn: () => api.draftGolden(kbId),
+    onSuccess: ({ items }) => {
+      const known = new Set(filled.map((row) => row.question.trim().toLowerCase()));
+      const fresh = items.filter((item) => !known.has(item.question.toLowerCase())).map((item) => toRow(item, true));
+      setRows((current) => [...(current ?? []).filter((row) => row.question.trim()), ...fresh]);
+    },
+  });
+  const run = useMutation({
+    mutationFn: () => api.evaluate(kbId, filled.map(toItem), version ? Number(version) : undefined),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["eval-runs", kbId] }),
+  });
+  const runs = history.data ?? [];
   const latest = runs[0];
+  const changed = latest ? changes(latest, runs[1]) : new Map<string, "better" | "worse">();
   const update = (id: string, change: Partial<QuestionRow>) =>
-    setRows((current) => current.map((row) => (row.id === id ? { ...row, ...change } : row)));
+    setRows((current) => (current ?? []).map((row) => (row.id === id ? { ...row, ...change, drafted: false } : row)));
 
   return (
     <>
       <PageHeader
         title="Quality"
-        description="Check whether Archie finds the right document for questions you know the answer to. Compare settings versions before you keep a change."
+        description="Check whether Archie finds the right document for questions you know the answer to. Your questions are kept and run again after every rebuild or settings change, so you can see what got better or worse."
       />
       <div className="grid gap-12 px-5 pb-16 md:px-8 xl:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
         <section aria-labelledby="questions">
@@ -164,11 +194,9 @@ export function EvalPage() {
                   setFileError(parsed.error ?? null);
                   if (!parsed.error) {
                     setRows(
-                      (parsed.items as { question: string; expected_sources?: string[] }[]).map((item) => ({
-                        id: crypto.randomUUID(),
-                        question: item.question,
-                        expected: item.expected_sources?.[0] ?? "",
-                      })),
+                      (parsed.items as { question: string; expected_sources?: string[] }[]).map((item) =>
+                        toRow({ question: item.question, expected_sources: item.expected_sources ?? [] }),
+                      ),
                     );
                   }
                 }}
@@ -180,8 +208,18 @@ export function EvalPage() {
             Archie should decline.
           </p>
           {fileError && <p className="mt-2 text-sm font-semibold text-bad">That file couldn't be read: {fileError}.</p>}
+          <ErrorNote error={golden.error} />
+          {rows !== null && rows.length === 0 && (
+            <div className="mt-4 rounded-[var(--radius-group)] bg-panel px-5 py-5 shadow-[0_0_0_0.5px_var(--color-rule)]">
+              <p className="font-semibold">No test questions yet</p>
+              <p className="mt-1 text-sm text-slate">
+                Archie can draft some from your documents: one per passage it picks across your files, plus a couple it
+                should decline. Check each one, then keep, edit or remove it.
+              </p>
+            </div>
+          )}
           <ol className="mt-4 space-y-3">
-            {rows.map((row, index) => (
+            {(rows ?? []).map((row, index) => (
               <li
                 key={row.id}
                 className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-[var(--radius-group)] bg-panel shadow-[0_0_0_0.5px_var(--color-rule)] p-3"
@@ -200,7 +238,7 @@ export function EvalPage() {
                 <Button
                   variant="ghost"
                   aria-label={`Remove question ${index + 1}`}
-                  onClick={() => setRows((r) => r.filter((item) => item.id !== row.id))}
+                  onClick={() => setRows((r) => (r ?? []).filter((item) => item.id !== row.id))}
                 >
                   <Trash2 className="size-4" />
                 </Button>
@@ -212,18 +250,33 @@ export function EvalPage() {
                   value={row.expected}
                   placeholder="File it should come from, or leave empty if Archie should decline"
                   onChange={(e) => update(row.id, { expected: e.target.value })}
-                  className="col-span-2 font-mono text-xs"
+                  className={cn("font-mono text-xs", row.drafted ? "col-span-1" : "col-span-2")}
                 />
+                {row.drafted && (
+                  <span className="self-center justify-self-end">
+                    <Badge tone="neutral" title="Drafted from your documents: check it before relying on it">
+                      Drafted
+                    </Badge>
+                  </span>
+                )}
               </li>
             ))}
           </ol>
-          <Button
-            variant="ghost"
-            className="mt-3"
-            onClick={() => setRows((r) => [...r, { id: crypto.randomUUID(), question: "", expected: "" }])}
-          >
-            <Plus className="size-4" aria-hidden /> Add a question
-          </Button>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button variant="ghost" busy={draft.isPending} onClick={() => draft.mutate()}>
+              <Sparkles className="size-4" aria-hidden /> Draft questions from your documents
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => setRows((r) => [...(r ?? []), toRow({ question: "", expected_sources: [] })])}
+            >
+              <Plus className="size-4" aria-hidden /> Add a question
+            </Button>
+            <span role="status" className="ml-auto text-xs text-slate">
+              {save.isPending ? "Saving…" : save.isError ? "Couldn't save" : save.isSuccess ? "Saved" : ""}
+            </span>
+          </div>
+          <ErrorNote error={draft.error} />
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-rule pt-5">
             <Select
               aria-label="Settings version to test"
@@ -253,12 +306,19 @@ export function EvalPage() {
           </h2>
           {!latest && (
             <p className="max-w-md text-sm text-slate">
-              Results appear here. Run the same questions against two settings versions to see which finds the right
-              documents more often.
+              Results appear here. After that, every rebuild and settings change runs your questions again and marks
+              what got better or worse.
             </p>
           )}
           {latest && (
             <>
+              <p className="text-sm text-slate">
+                Latest run: version {latest.version}, {latest.reason}, {relativeTime(latest.ran_at)}.
+                {changed.size > 0 &&
+                  ` Since the run before: ${[...changed.values()].filter((c) => c === "better").length} better, ${
+                    [...changed.values()].filter((c) => c === "worse").length
+                  } worse.`}
+              </p>
               <Group title="Results">
                 {METRICS.map((metric) => (
                   <Row key={metric.key} label={metric.label} detail={metric.hint}>
@@ -284,9 +344,8 @@ export function EvalPage() {
                   </thead>
                   <tbody className="divide-y divide-rule">
                     {latest.results.map((row) => {
-                      const good = row.answerable
-                        ? row.rank !== null && row.rank <= 5 && !row.abstained
-                        : row.abstained;
+                      const good = passed(row);
+                      const change = changed.get(row.question);
                       const text = row.answerable
                         ? row.abstained
                           ? "Declined, but should have answered"
@@ -299,7 +358,16 @@ export function EvalPage() {
                       return (
                         <tr key={row.question}>
                           <td className="py-3 pr-4">{row.question}</td>
-                          <td className={cn("py-3 font-semibold", good ? "text-ok" : "text-bad")}>{text}</td>
+                          <td className={cn("py-3 font-semibold", good ? "text-ok" : "text-bad")}>
+                            {text}
+                            {change && (
+                              <span className="ml-2 align-[1px]">
+                                <Badge tone={change === "better" ? "ok" : "bad"}>
+                                  {change === "better" ? "Better" : "Worse"}
+                                </Badge>
+                              </span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -324,10 +392,12 @@ export function EvalPage() {
                 </thead>
                 <tbody className="divide-y divide-rule font-mono">
                   {runs.map((report) => (
-                    <tr key={report.runId}>
+                    <tr key={report.id}>
                       <td className="py-3 pr-4 font-sans">
                         Version {report.version}
-                        <span className="block text-xs text-slate">{relativeTime(report.ranAt)}</span>
+                        <span className="block text-xs text-slate">
+                          {report.reason} · {relativeTime(report.ran_at)}
+                        </span>
                       </td>
                       {METRICS.map((metric) => {
                         const value = report.metrics[metric.key];

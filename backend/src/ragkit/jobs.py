@@ -29,6 +29,7 @@ from typing import Any
 from ragkit.chunking import Chunk, chunk_document
 from ragkit.config import KnowledgeBaseConfig, ParsingConfig
 from ragkit.enrichment import Enrichment, enrich_chunks
+from ragkit.evaluation import rerun
 from ragkit.formats import MEDIA_TYPES
 from ragkit.index import VectorIndex, collection_name, point_id
 from ragkit.parsing import ParsedDocument, parse_document
@@ -145,6 +146,7 @@ class Builder:
         try:
             status = await self._build(job_id, kb_id, job["config_version"], config, tracker, summary)
             self.db.finish_job(job_id, status, None, summary)
+            await rerun(self.db, self.index, self.providers, kb_id, f"rebuilt (version {job['config_version']})")
             return status
         except BuildCancelledError:
             self.db.finish_job(job_id, "cancelled", None, summary)

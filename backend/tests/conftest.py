@@ -43,6 +43,10 @@ def default_script(messages: list[dict[str, str]]) -> str:
         return prompt.rsplit("Question:", 1)[1].strip()
     if prompt.startswith("Do the sources support"):
         return '{"verdict": "supported"}'
+    if prompt.startswith("Write one question"):
+        return "Question: what about " + " ".join(prompt.rsplit("Passage:", 1)[1].split()[:6]).lower()
+    if prompt.startswith("A chatbot answers only"):
+        return "Who won the 1998 football world cup?\nWhat is the capital of Peru?"
     return "According to the documents, the answer is described in the first source in detail [S1]."
 
 

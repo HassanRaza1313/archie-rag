@@ -214,6 +214,18 @@ export interface EvalReport {
   results: { question: string; answerable: boolean; rank: number | null; abstained: boolean; confidence: number }[];
 }
 
+/** A stored run of a chatbot's test questions, and what triggered it. */
+export interface EvalRun extends EvalReport {
+  id: number;
+  ran_at: number;
+  reason: string;
+}
+
+export interface GoldenItem {
+  question: string;
+  expected_sources: string[];
+}
+
 export interface SchemaResponse {
   schema: JsonSchema;
   index_stages: string[];
@@ -474,7 +486,13 @@ export const api = {
   trace: (id: string) => request<Trace>(`/api/traces/${id}`),
   stats: (id: string) => request<Stats>(`/api/kbs/${id}/stats`),
   evaluate: (id: string, items: unknown[], version?: number) =>
-    request<EvalReport>(`/api/kbs/${id}/eval`, json({ items, version })),
+    request<EvalRun>(`/api/kbs/${id}/eval`, json({ items, version })),
+  evalRuns: (id: string) => request<EvalRun[]>(`/api/kbs/${id}/eval/runs`),
+  golden: (id: string) => request<{ items: GoldenItem[]; updated_at: number | null }>(`/api/kbs/${id}/golden`),
+  saveGolden: (id: string, items: GoldenItem[]) =>
+    request<{ items: GoldenItem[] }>(`/api/kbs/${id}/golden`, { method: "PUT", body: JSON.stringify({ items }) }),
+  draftGolden: (id: string, count = 10) =>
+    request<{ items: GoldenItem[] }>(`/api/kbs/${id}/golden/draft`, json({ count })),
   suggestions: (base: string) => request<string[]>(`${base}/suggestions`),
   folders: (path?: string) =>
     request<FolderListing>(`/api/system/folders${path ? `?path=${encodeURIComponent(path)}` : ""}`),

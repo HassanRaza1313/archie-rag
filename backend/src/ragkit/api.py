@@ -55,7 +55,7 @@ from ragkit.config import (
     preset_config,
 )
 from ragkit.enrichment import Enrichment
-from ragkit.evaluation import GoldenItem, evaluate
+from ragkit.evaluation import GoldenItem, draft, evaluate, rerun
 from ragkit.formats import IMAGE_TYPES, MEDIA_TYPES
 from ragkit.index import BUILTIN_FILTER_FIELDS, VectorIndex
 from ragkit.jobs import BUILD_STAGES, Builder, is_terminal, run_worker
@@ -180,6 +180,14 @@ class EvalBody(BaseModel):
     items: list[GoldenItem] = Field(min_length=1, max_length=500)
 
 
+class GoldenBody(BaseModel):
+    items: list[GoldenItem] = Field(max_length=500)
+
+
+class DraftBody(BaseModel):
+    count: int = Field(10, ge=1, le=30)
+
+
 def _context(request: Request) -> AppContext:
     context: AppContext = request.app.state.context
     return context
@@ -220,6 +228,7 @@ def create_app(
             db.close()
 
     app = FastAPI(title="ragkit", version=__version__, lifespan=lifespan)
+    background: set[asyncio.Task[None]] = set()  # strong references, so pending re-runs are not garbage-collected
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["*"], allow_headers=["*"])
 
     def identify(context: AppContext, request: Request) -> Identity | None:
@@ -712,6 +721,12 @@ def create_app(
             raise HTTPException(422, "Also search can only name other chatbots that exist.")
         version = context.db.add_config_version(kb_id, config)
         requires_rebuild = config.index_fingerprint() != kb["built_index_hash"]
+        if kb["active_collection"] and not requires_rebuild:  # a rebuild re-runs them when it finishes instead
+            task = asyncio.create_task(
+                rerun(context.db, context.index, context.providers, kb_id, f"settings saved (version {version})")
+            )
+            background.add(task)
+            task.add_done_callback(background.discard)
         return {"version": version, "requires_rebuild": requires_rebuild}
 
     @app.post("/api/kbs/{kb_id}/configs/validate")
@@ -1014,9 +1029,35 @@ def create_app(
     async def run_eval(kb_id: str, body: EvalBody, context: Ctx) -> dict[str, Any]:
         kb_or_404(context, kb_id)
         try:
-            return await evaluate(context.db, context.index, context.providers, kb_id, body.items, body.version)
+            report = await evaluate(context.db, context.index, context.providers, kb_id, body.items, body.version)
         except (ValueError, KeyError) as exc:
             raise HTTPException(409, str(exc)) from exc
+        return context.db.add_eval_run(kb_id, report, "run by hand")
+
+    @app.get("/api/kbs/{kb_id}/eval/runs")
+    async def eval_runs(kb_id: str, context: Ctx) -> list[dict[str, Any]]:
+        kb_or_404(context, kb_id)
+        return context.db.list_eval_runs(kb_id)
+
+    @app.get("/api/kbs/{kb_id}/golden")
+    async def golden(kb_id: str, context: Ctx) -> dict[str, Any]:
+        kb_or_404(context, kb_id)
+        return context.db.get_golden(kb_id) or {"items": [], "updated_at": None}
+
+    @app.put("/api/kbs/{kb_id}/golden")
+    async def save_golden(kb_id: str, body: GoldenBody, context: Ctx) -> dict[str, Any]:
+        kb_or_404(context, kb_id)
+        context.db.set_golden(kb_id, [item.model_dump() for item in body.items])
+        return context.db.get_golden(kb_id) or {}
+
+    @app.post("/api/kbs/{kb_id}/golden/draft")
+    async def draft_golden(kb_id: str, body: DraftBody, context: Ctx) -> dict[str, Any]:
+        kb_or_404(context, kb_id)
+        try:
+            items = await draft(context.db, context.index, context.providers, kb_id, body.count)
+        except (ValueError, ProviderError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"items": items}
 
     if settings.ui_dist_dir and (settings.ui_dist_dir / "index.html").is_file():
         _mount_ui(app, settings.ui_dist_dir)

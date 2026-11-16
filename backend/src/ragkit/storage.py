@@ -116,6 +116,20 @@ CREATE TABLE IF NOT EXISTS traces (
     data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS traces_kb_time ON traces(kb_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS golden_sets (
+    kb_id TEXT PRIMARY KEY REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    items TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS eval_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    ran_at REAL NOT NULL,
+    reason TEXT NOT NULL,
+    report TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS eval_runs_kb ON eval_runs(kb_id, id DESC);
 CREATE TABLE IF NOT EXISTS answer_cache (
     scope TEXT NOT NULL,
     question_key TEXT NOT NULL,
@@ -605,6 +619,39 @@ class Database:
 
     def purge_traces(self, kb_id: str, older_than: float) -> int:
         return self._run("DELETE FROM traces WHERE kb_id = ? AND created_at < ?", (kb_id, older_than))
+
+    # Golden sets and their runs
+
+    def get_golden(self, kb_id: str) -> dict[str, Any] | None:
+        row = self._one("SELECT items, updated_at FROM golden_sets WHERE kb_id = ?", (kb_id,))
+        return {"items": json.loads(row["items"]), "updated_at": row["updated_at"]} if row else None
+
+    def set_golden(self, kb_id: str, items: list[dict[str, Any]]) -> None:
+        self._run(
+            "INSERT INTO golden_sets (kb_id, items, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(kb_id) DO UPDATE SET items = excluded.items, updated_at = excluded.updated_at",
+            (kb_id, json.dumps(items), time.time()),
+        )
+
+    def add_eval_run(self, kb_id: str, report: dict[str, Any], reason: str, keep: int = 20) -> dict[str, Any]:
+        ran_at = time.time()
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO eval_runs (kb_id, version, ran_at, reason, report) VALUES (?, ?, ?, ?, ?)",
+                (kb_id, report["version"], ran_at, reason, json.dumps(report)),
+            )
+            conn.execute(
+                "DELETE FROM eval_runs WHERE kb_id = ? AND id NOT IN "
+                "(SELECT id FROM eval_runs WHERE kb_id = ? ORDER BY id DESC LIMIT ?)",
+                (kb_id, kb_id, keep),
+            )
+        return {**report, "id": cursor.lastrowid, "ran_at": ran_at, "reason": reason}
+
+    def list_eval_runs(self, kb_id: str, limit: int = 10) -> list[dict[str, Any]]:
+        rows = self._all(
+            "SELECT id, ran_at, reason, report FROM eval_runs WHERE kb_id = ? ORDER BY id DESC LIMIT ?", (kb_id, limit)
+        )
+        return [{**json.loads(row.pop("report")), **row} for row in rows]
 
     # Answer cache
 

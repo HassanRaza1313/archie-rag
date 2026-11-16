@@ -57,7 +57,7 @@ backend/src/ragkit/
   claims.py       checks each answer sentence against its cited passage (local entailment model)
   telemetry.py    request traces, one-line request logs, JSON logging
   jobs.py         build pipeline and worker loop
-  evaluation.py   golden-set retrieval evaluation
+  evaluation.py   golden-set retrieval evaluation; drafts golden sets and re-runs them after changes
   api.py          HTTP API + SSE + static UI
   cli.py          ragkit serve | worker | kb | eval | backup | restore | doctor
 backend/tests/    227 tests: unit, integration (embedded Qdrant), agent scenarios, API, CLI
@@ -283,6 +283,23 @@ missing model, with a note in the trace. Three sentences take about 0.1 s on a l
 paraphrase that needs inference, so a flag means "check this", not "false"; `on_verify_fail: abstain` replaces an
 answer only when most of it is unbacked.
 
+### 6.7 Golden sets drafted for you (`evaluation.py`)
+Each chatbot keeps one golden set on the server (the Quality page saves edits as you type), and the last 20 runs
+with what triggered each one.
+
+- **Drafting** reads up to 2,000 indexed passages, drops excluded and short ones (under 200 characters), and picks
+  up to `count` (default 10) spread evenly through every document, round-robin across documents. Each becomes one
+  question naming its file: enrichment's first question for the passage when there is one, else one call to the
+  chatbot's model, asked to use its own words. One more call drafts two questions the documents can't answer. Drafts
+  are only suggestions, marked as drafted until edited; nothing is saved until the set is.
+- **Re-runs** follow every successful build, and every saved settings change that needs no rebuild (one that does
+  re-runs after its build). A run takes one embedding per question and no LLM calls.
+- **What changed:** per question, a pass is the expected file in the top 5 without declining (or a decline, for
+  questions without one). The page marks each question that passed in the previous run and fails now, or the
+  reverse.
+
+Passages sent to a remote model while drafting are redacted as for answers (`privacy.redact_prompt`).
+
 ## 7. Security and privacy
 
 - API binds to 127.0.0.1; a non-loopback bind needs `RAG_API_KEY` (bearer auth on every route except health).
@@ -356,7 +373,8 @@ exporter can be added without touching call sites.
 | `PATCH …/documents/chunks`, `DELETE …/documents/chunks?uri=&ordinal=` | Edit or exclude a chunk (re-embedded at once); undo |
 | `GET /api/slo?kb_id=` | SLO status, error budget and firing alerts |
 | `GET /metrics` | Prometheus exposition (needs the API key when one is set) |
-| `POST /api/kbs/{id}/eval` | Golden-set evaluation for a version |
+| `POST /api/kbs/{id}/eval`, `GET …/eval/runs` | Golden-set evaluation for a version, kept with what triggered it (last 20 runs) |
+| `GET/PUT /api/kbs/{id}/golden`, `POST …/golden/draft` `{count}` | The chatbot's saved test questions; drafted ones to review |
 
 OpenAPI docs at `/docs`. Streams are SSE over `fetch`, so they work with POST bodies and auth headers.
 

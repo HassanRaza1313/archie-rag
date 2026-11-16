@@ -6,7 +6,7 @@ import { centreOf, loadConversation, originWithin, passageParts } from "../featu
 import { splitCitations } from "../features/chat/citations";
 import { shareLinks } from "../features/chat/ShareSheet";
 import { qualityVerdict, TEMPLATES } from "../features/documents/DocumentsPage";
-import { parseGolden } from "../features/eval/EvalPage";
+import { changes, parseGolden } from "../features/eval/EvalPage";
 import { openingChatbot } from "../features/kbs/HomePage";
 import { fileCount } from "../features/new/FolderPicker";
 import { rangeProblem } from "../features/setup/SchemaField";
@@ -150,6 +150,32 @@ describe("splitCitations", () => {
       { kind: "text", text: ".", flagged: true },
       { kind: "text", text: " Turn weekly." },
     ]);
+  });
+});
+
+describe("changes between runs", () => {
+  const result = (question: string, rank: number | null, abstained = false, answerable = true) => ({
+    question,
+    answerable,
+    rank,
+    abstained,
+    confidence: 0.5,
+  });
+  const report = (results: ReturnType<typeof result>[]) => ({
+    version: 1,
+    items: 0,
+    metrics: {},
+    warnings: [],
+    results,
+  });
+  it("marks questions that started or stopped passing", () => {
+    const before = report([result("a", 1), result("b", 9), result("c", null, true, false), result("d", 2)]);
+    const after = report([result("a", 7), result("b", 2), result("c", null, true, false), result("e", 1)]);
+    expect([...changes(after, before)]).toEqual([
+      ["a", "worse"],
+      ["b", "better"],
+    ]);
+    expect(changes(after, undefined).size).toBe(0);
   });
 });
 

@@ -29,7 +29,9 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
   metrics, SLOs with burn-rate alerts, and a Health page that says it in plain words. People rate answers with a
   thumbs up or down, and Health lists the questions most often left unanswered: what your documents lack.
 - **Measured, not guessed.** Golden-set evaluation (hit@k, MRR, passage-level hits, abstain rates) per config
-  version, compared side by side, plus an ingestion benchmark (`bench/`) on deliberately hard documents.
+  version, compared side by side, plus an ingestion benchmark (`bench/`) on deliberately hard documents. Archie
+  drafts the test questions from your documents; you keep or edit them, and they re-run after every rebuild or
+  settings change, marking each question that got better or worse.
 - **Runs on your choice of models.** Claude, OpenAI, Gemini, Ollama or any OpenAI-compatible server, added in
   Preferences with a live check; each chatbot picks its own, and switching is one click.
 - **One front door over many collections.** A chatbot can also search other chatbots; a local router sends each
@@ -60,7 +62,7 @@ style → **Create**. Archie builds it and opens Ask. Requirements, every comman
 ## Development
 
 ```bash
-cd backend && .venv/bin/python -m pytest          # 247 tests; ruff + mypy configured in pyproject.toml
+cd backend && .venv/bin/python -m pytest          # 250 tests; ruff + mypy configured in pyproject.toml
 cd frontend && npm test && npm run lint && npm run typecheck
 ```
 
