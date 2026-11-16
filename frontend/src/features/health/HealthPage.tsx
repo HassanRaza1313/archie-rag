@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, MessageCircleQuestion } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Badge, cn, EmptyState, ErrorNote, PageHeader, Skeleton } from "../../components/ui";
-import { type Alert, api, type Slo } from "../../lib/api";
+import { type Alert, api, type Gap, type Slo } from "../../lib/api";
+import { relativeTime } from "../../lib/format";
 
 const ALERT_TEXT: Record<string, string> = {
   availability: "More questions are failing than the promise allows",
@@ -82,9 +83,54 @@ function AlertRow({ alert, names }: { alert: Alert; names: Map<string, string> }
   );
 }
 
+function gapDetail(gap: Gap, name: string | undefined): string {
+  const parts = [name ?? "A chatbot", `asked ${gap.asked === 1 ? "once" : `${gap.asked} times`}`];
+  if (gap.unanswered) parts.push(gap.unanswered === gap.asked ? "never answered" : `${gap.unanswered} unanswered`);
+  if (gap.unhelpful) parts.push(`${gap.unhelpful} rated not helpful`);
+  return [...parts, relativeTime(gap.last_asked)].join(" · ");
+}
+
+function Gaps({ gaps, names }: { gaps: Gap[]; names: Map<string, string> }) {
+  return (
+    <section aria-labelledby="gaps">
+      <h2 id="gaps" className="text-lg font-semibold">
+        What people couldn't find
+      </h2>
+      <p className="mt-1 text-sm text-slate">
+        Questions from the last 30 days that Archie couldn't answer or people rated not helpful, most asked first.
+        Adding documents that cover them fills the gap.
+      </p>
+      {gaps.length === 0 ? (
+        <p className="mt-3 flex items-center gap-2 text-sm text-ok">
+          <CheckCircle2 className="size-5" aria-hidden /> Every question found an answer.
+        </p>
+      ) : (
+        <ul className="mt-3 divide-y divide-rule px-4 rounded-[var(--radius-group)] bg-panel shadow-[0_0_0_0.5px_var(--color-rule)]">
+          {gaps.map((gap) => (
+            <li key={`${gap.kb_id}-${gap.question}`} className="flex items-start gap-3 py-3.5">
+              <MessageCircleQuestion className="mt-0.5 size-5 shrink-0 text-slate" aria-hidden />
+              <div className="min-w-0 flex-1">
+                <div className="font-medium break-words">{gap.question}</div>
+                <div className="text-sm text-slate">{gapDetail(gap, names.get(gap.kb_id))}</div>
+              </div>
+              <Link
+                to={`/kb/${gap.kb_id}/manage/documents`}
+                className="shrink-0 text-sm font-medium text-accent hover:underline"
+              >
+                Documents
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function HealthPage() {
   const report = useQuery({ queryKey: ["slo"], queryFn: () => api.slo(), refetchInterval: 30_000 });
   const kbs = useQuery({ queryKey: ["kbs"], queryFn: api.listKbs });
+  const gaps = useQuery({ queryKey: ["gaps"], queryFn: api.gaps, refetchInterval: 60_000 });
   const names = new Map((kbs.data ?? []).map((kb) => [kb.id, kb.name]));
   const firing = report.data?.alerts.filter((alert) => alert.state === "firing") ?? [];
 
@@ -122,6 +168,7 @@ export function HealthPage() {
             ))}
           </div>
         )}
+        {gaps.data && report.data?.slos.some((slo) => slo.requests > 0) && <Gaps gaps={gaps.data} names={names} />}
         {report.data?.slos.every((slo) => slo.requests === 0) && (
           <EmptyState title="Nothing measured yet">
             Status fills in as people ask questions. Detailed metrics are also available to monitoring tools at{" "}

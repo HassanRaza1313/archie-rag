@@ -87,6 +87,16 @@ export type ChatEvent =
     }
   | { type: "error"; message: string; trace_id?: string };
 
+/** A question people keep asking that went unanswered or was rated unhelpful. */
+export interface Gap {
+  kb_id: string;
+  question: string;
+  asked: number;
+  unanswered: number;
+  unhelpful: number;
+  last_asked: number;
+}
+
 /** One sentence of an answer, checked against the sources it cites. */
 export interface Claim {
   text: string;
@@ -488,6 +498,9 @@ export const api = {
     request<void>(`/api/kbs/${kbId}/documents/chunks?uri=${encodeURIComponent(uri)}&ordinal=${ordinal}`, {
       method: "DELETE",
     }),
+  feedback: (base: string, traceId: string, rating: "up" | "down" | null) =>
+    request<void>(`${base}/feedback`, json({ trace_id: traceId, rating })),
+  gaps: () => request<Gap[]>("/api/gaps"),
   clearSession: (base: string, sessionId: string) =>
     request<void>(`${base}/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
 };

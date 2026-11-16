@@ -26,7 +26,8 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
 - **Builds as jobs.** Incremental, resumable, cancellable, with a live stage timeline and zero-downtime index swaps.
 - **Telemetry that explains.** Per request: candidate funnel, agent decisions, latency waterfall, top chunks with
   dense and keyword ranks. Per build: stage counts, failures and a corpus profile. Correlated logs, Prometheus
-  metrics, SLOs with burn-rate alerts, and a Health page that says it in plain words.
+  metrics, SLOs with burn-rate alerts, and a Health page that says it in plain words. People rate answers with a
+  thumbs up or down, and Health lists the questions most often left unanswered: what your documents lack.
 - **Measured, not guessed.** Golden-set evaluation (hit@k, MRR, passage-level hits, abstain rates) per config
   version, compared side by side, plus an ingestion benchmark (`bench/`) on deliberately hard documents.
 - **Runs on your choice of models.** Claude, OpenAI, Gemini, Ollama or any OpenAI-compatible server, added in
@@ -59,7 +60,7 @@ style → **Create**. Archie builds it and opens Ask. Requirements, every comman
 ## Development
 
 ```bash
-cd backend && .venv/bin/python -m pytest          # 245 tests; ruff + mypy configured in pyproject.toml
+cd backend && .venv/bin/python -m pytest          # 247 tests; ruff + mypy configured in pyproject.toml
 cd frontend && npm test && npm run lint && npm run typecheck
 ```
 

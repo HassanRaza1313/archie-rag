@@ -1,5 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, FileText, RotateCcw, ScanSearch, Search, Share, Square, UserRound } from "lucide-react";
+import {
+  ArrowUp,
+  FileText,
+  RotateCcw,
+  ScanSearch,
+  Search,
+  Share,
+  Square,
+  ThumbsDown,
+  ThumbsUp,
+  UserRound,
+} from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { TracePanel } from "../../components/TracePanel";
@@ -37,9 +48,12 @@ export interface Message {
   claims?: Claim[];
   summary?: AnswerSummary;
   traceId?: string;
+  rating?: Rating;
   error?: string;
   streaming?: boolean;
 }
+
+type Rating = "up" | "down";
 
 type Profile = { name: string; preferences: string };
 type Conversation = { sessionId: string; messages: Message[] };
@@ -264,7 +278,47 @@ function Sources({ message, onOpen }: { message: Message; onOpen: (source: Sourc
   );
 }
 
-function HowAnswered({ message, onTrace }: { message: Message; onTrace?: () => void }) {
+function RateAnswer({ rating, onRate }: { rating?: Rating; onRate: (rating: Rating | null) => void }) {
+  const choices = [
+    { value: "up", label: "Helpful", Icon: ThumbsUp },
+    { value: "down", label: "Not helpful", Icon: ThumbsDown },
+  ] as const;
+  return (
+    <span className="ml-auto inline-flex items-center gap-0.5">
+      {rating && (
+        <span role="status" className="mr-1.5 text-xs">
+          Thanks
+        </span>
+      )}
+      {choices.map(({ value, label, Icon }) => (
+        <button
+          key={value}
+          type="button"
+          aria-label={label}
+          aria-pressed={rating === value}
+          title={label}
+          onClick={() => onRate(rating === value ? null : value)}
+          className={cn(
+            "press grid size-7 cursor-default place-items-center rounded-full hover:bg-plinth hover:text-ink",
+            rating === value && "bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent",
+          )}
+        >
+          <Icon className="size-3.5" aria-hidden fill={rating === value ? "currentColor" : "none"} />
+        </button>
+      ))}
+    </span>
+  );
+}
+
+function HowAnswered({
+  message,
+  onTrace,
+  onRate,
+}: {
+  message: Message;
+  onTrace?: () => void;
+  onRate: (rating: Rating | null) => void;
+}) {
   const summary = message.summary;
   const verdict = verdictText(message);
   return (
@@ -292,6 +346,9 @@ function HowAnswered({ message, onTrace }: { message: Message; onTrace?: () => v
         >
           <ScanSearch className="size-3.5" aria-hidden /> How Archie found this
         </button>
+      )}
+      {message.traceId && message.outcome && message.outcome !== "error" && (
+        <RateAnswer rating={message.rating} onRate={onRate} />
       )}
     </div>
   );
@@ -522,6 +579,13 @@ export function ChatView({
       messages: current.messages.map((message) => (message.id === id ? change(message) : message)),
     }));
 
+  const rate = (message: Message, rating: Rating | null) => {
+    if (!message.traceId) return;
+    const before = message.rating;
+    update(message.id, (m) => ({ ...m, rating: rating ?? undefined }));
+    api.feedback(base, message.traceId, rating).catch(() => update(message.id, (m) => ({ ...m, rating: before })));
+  };
+
   async function send(query: string) {
     const assistantId = crypto.randomUUID();
     setConversation((current) => ({
@@ -680,6 +744,7 @@ export function ChatView({
                       <HowAnswered
                         message={message}
                         onTrace={canTrace ? () => setTraceId(message.traceId ?? null) : undefined}
+                        onRate={(rating) => rate(message, rating)}
                       />
                     </>
                   )}

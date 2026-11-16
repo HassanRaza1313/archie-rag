@@ -206,6 +206,8 @@ class Database:
         self._conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS kb_share ON knowledge_bases(share_token)")
         if "kb_id" not in {row["name"] for row in self._conn.execute("PRAGMA table_info(enrichment_cache)")}:
             self._conn.execute("ALTER TABLE enrichment_cache ADD COLUMN kb_id TEXT")
+        if "feedback" not in {row["name"] for row in self._conn.execute("PRAGMA table_info(traces)")}:
+            self._conn.execute("ALTER TABLE traces ADD COLUMN feedback INTEGER")  # 1 helpful, -1 not, NULL unrated
 
     def close(self) -> None:
         self._conn.close()
@@ -589,6 +591,17 @@ class Database:
     def last_failed_build_time(self) -> float | None:
         row = self._one("SELECT MAX(finished_at) AS t FROM jobs WHERE status = 'failed'")
         return float(row["t"]) if row and row["t"] else None
+
+    def set_feedback(self, kb_id: str, trace_id: str, rating: int | None) -> bool:
+        return self._run("UPDATE traces SET feedback = ? WHERE id = ? AND kb_id = ?", (rating, trace_id, kb_id)) > 0
+
+    def gap_rows(self, since: float, limit: int = 5000) -> list[dict[str, Any]]:
+        """Recent questions that went unanswered or were rated unhelpful, newest first."""
+        return self._all(
+            "SELECT kb_id, query, outcome, feedback, created_at FROM traces "
+            "WHERE created_at >= ? AND (outcome = 'abstained' OR feedback = -1) ORDER BY created_at DESC LIMIT ?",
+            (since, limit),
+        )
 
     def purge_traces(self, kb_id: str, older_than: float) -> int:
         return self._run("DELETE FROM traces WHERE kb_id = ? AND created_at < ?", (kb_id, older_than))

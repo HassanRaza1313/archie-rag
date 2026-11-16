@@ -122,6 +122,11 @@ class ChatBody(BaseModel):
     profile: dict[str, Annotated[str, Field(max_length=300)]] = Field(default_factory=dict, max_length=5)
 
 
+class FeedbackBody(BaseModel):
+    trace_id: str = Field(min_length=1, max_length=64)
+    rating: Literal["up", "down"] | None  # None takes a rating back
+
+
 class SignInBody(BaseModel):
     email: str = Field(min_length=3, max_length=200)
     password: str = Field(min_length=1, max_length=200)
@@ -929,6 +934,15 @@ def create_app(
     async def clear_session(kb_id: str, session_id: str, context: Ctx) -> None:
         context.db.clear_turns(f"{kb_id}:{session_id}")
 
+    def rate(context: AppContext, kb_id: str, body: FeedbackBody) -> None:
+        rating = {"up": 1, "down": -1, None: None}[body.rating]
+        if not context.db.set_feedback(kb_id, body.trace_id, rating):
+            raise HTTPException(404, "answer not found")
+
+    @app.post("/api/kbs/{kb_id}/feedback", status_code=204)
+    async def feedback(kb_id: str, body: FeedbackBody, context: Ctx) -> None:
+        rate(context, kb_or_404(context, kb_id)["id"], body)
+
     # Shared chatbots: anyone with the link may ask questions, and nothing else
 
     def shared(context: AppContext, token: str) -> dict[str, Any]:
@@ -962,6 +976,19 @@ def create_app(
     @app.delete("/api/share/{token}/sessions/{session_id}", status_code=204)
     async def shared_clear_session(token: str, session_id: str, context: Ctx) -> None:
         context.db.clear_turns(f"{shared(context, token)['id']}:{session_id}")
+
+    @app.post("/api/share/{token}/feedback", status_code=204)
+    async def shared_feedback(token: str, body: FeedbackBody, request: Request, context: Ctx) -> None:
+        kb = shared(context, token)
+        visitor = request.client.host if request.client else "unknown"
+        if not await asyncio.to_thread(context.db.rate_allow, f"share-feedback:{token}:{visitor}", 30, 60):
+            raise HTTPException(429, "Too many ratings. Try again in a minute.", headers={"Retry-After": "60"})
+        rate(context, kb["id"], body)
+
+    @app.get("/api/gaps")
+    async def gaps(context: Ctx, days: int = 30) -> list[dict[str, Any]]:
+        since = time.time() - max(1, min(days, 365)) * 86400
+        return knowledge_gaps(await asyncio.to_thread(context.db.gap_rows, since))
 
     # Telemetry and evaluation
 
@@ -1121,6 +1148,22 @@ def summarize_traces(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "error_rate": rate(lambda r: r["outcome"] == "error"),
         "verify_fail_rate": rate(lambda r: r["verify"] == "fail"),
     }
+
+
+def knowledge_gaps(rows: list[dict[str, Any]], top: int = 10) -> list[dict[str, Any]]:
+    """The questions most often left unanswered or rated unhelpful, per chatbot: what the documents lack."""
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:  # newest first, so each group keeps its latest wording
+        key = (row["kb_id"], " ".join(row["query"].lower().split()).rstrip("?.! "))
+        group = groups.setdefault(
+            key,
+            {"kb_id": row["kb_id"], "question": row["query"], "asked": 0, "unanswered": 0, "unhelpful": 0,
+             "last_asked": row["created_at"]},
+        )  # fmt: skip
+        group["asked"] += 1
+        group["unanswered"] += row["outcome"] == "abstained"
+        group["unhelpful"] += row["feedback"] == -1
+    return sorted(groups.values(), key=lambda g: (-g["asked"], -g["last_asked"]))[:top]
 
 
 def _providers_of(context: AppContext, kb_id: str) -> set[str]:

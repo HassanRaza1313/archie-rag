@@ -24,7 +24,7 @@ _SCRYPT = {"n": 2**14, "r": 8, "p": 1}
 # Everything a viewer may call; anything not listed needs an editor (or an owner, below).
 _VIEWER = re.compile(
     r"GET /api/kbs(/[^/]+(/suggestions)?)?"
-    r"|POST /api/kbs/[^/]+/chat"
+    r"|POST /api/kbs/[^/]+/(chat|feedback)"
     r"|DELETE /api/kbs/[^/]+/sessions/[^/]+"
     r"|GET /api/system/(health|ready|capabilities)"
 )

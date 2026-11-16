@@ -328,6 +328,7 @@ exporter can be added without touching call sites.
 | Correlation | One id per request: incoming `traceparent` trace id, else a valid `X-Request-ID`, else generated. It is the trace id, the `rid` on log lines, the `X-Request-ID` response header, the exemplar on chat metrics, the id the UI links to, and it is forwarded to model servers |
 | SLOs | Availability (99 % of chat requests succeed) and latency (95 % show output within 5 s), configurable via `RAG_SLO_*`, evaluated over 7 days from traces at `/api/slo`, with error budget remaining |
 | Alerts | Multi-window burn rates (1 h/5 m and 6 h/30 m page, 3 d/6 h ticket) evaluated in-app at `/api/slo`, plus build-failure alerts; the same rules for Prometheus in `rules.yml` (with RagkitDown, HTTP 5xx and model-server error alerts); `rag up --observability` runs Prometheus |
+| Feedback and gaps | Thumbs up or down under every answer, on shared pages too, stored on its trace (taken back by pressing again). Status lists the 10 questions of the last 30 days most often abstained on or rated not helpful, per chatbot, grouped ignoring case, spacing and end punctuation: what the documents lack. Ratings go with their traces under trace retention |
 | Cardinality | Labels only from closed sets (route templates, status classes, outcomes, verdicts, stages); unknown paths collapse to `unmatched`; chatbot, session and job ids and queries never become labels; a test enforces the series budget |
 
 ## 9. API
@@ -344,7 +345,8 @@ exporter can be added without touching call sites.
 | `POST /api/kbs/{id}/share` `{enabled, reset}` | Turn the share link on or off, or replace it |
 | `GET /api/auth/me`, `POST /api/auth/owner`, `…/sign-in`, `…/sign-out`, `…/password`, `GET/POST /api/auth/invite/{token}` | Accounts: who is signed in, the first owner, sessions, invitations and password resets |
 | `GET/POST /api/users`, `PATCH/DELETE /api/users/{id}`, `POST /api/users/{id}/invite`, `GET /api/audit` | People and the change history (owners only) |
-| `GET /api/share/{token}`, `…/suggestions`, `POST …/chat`, `DELETE …/sessions/{sid}` | Shared chatbot: no admin key, rate-limited per visitor |
+| `GET /api/share/{token}`, `…/suggestions`, `POST …/chat`, `POST …/feedback`, `DELETE …/sessions/{sid}` | Shared chatbot: no admin key, rate-limited per visitor |
+| `POST /api/kbs/{id}/feedback` `{trace_id, rating: up·down·null}`, `GET /api/gaps?days=` | Rate an answer (viewers may); the most asked unanswered or unhelpful questions (editors) |
 | `GET /api/system/folders?path=` | Folder picker: one level inside the allowed data roots, with supported-file counts |
 | `GET /api/setup/models?preset=` | Whether a preset's models are installed; Archie's built-in search model as a fallback |
 | `DELETE /api/kbs/{id}/sessions/{sid}` | Forget a conversation |
