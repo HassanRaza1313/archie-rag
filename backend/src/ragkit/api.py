@@ -54,6 +54,7 @@ from ragkit.config import (
     deep_merge,
     preset_config,
 )
+from ragkit.connectors import ACCOUNT_KINDS, CONNECTORS, Account, ConnectorError
 from ragkit.enrichment import Enrichment
 from ragkit.evaluation import GoldenItem, draft, evaluate, rerun
 from ragkit.formats import IMAGE_TYPES, MEDIA_TYPES
@@ -72,7 +73,7 @@ from ragkit.observability import (
 from ragkit.parsing import LAYOUT_ONLY
 from ragkit.providers import ProviderError, ProviderRegistry
 from ragkit.settings import Settings
-from ragkit.sources import SourceError, discover, list_folders, resolve_root
+from ragkit.sources import SourceError, check_connector, discover, list_folders, resolve_root
 from ragkit.storage import Database, JobConflictError
 from ragkit.telemetry import request_id_var
 from ragkit.textutil import bm25_document_vector, estimate_tokens
@@ -162,6 +163,13 @@ class ConnectionBody(BaseModel):
     name: str = Field("", max_length=60)
     base_url: str = Field("", max_length=300)
     api_key: str = Field("", max_length=1000)
+
+
+class SourceAccountBody(BaseModel):
+    kind: str = Field(max_length=40)
+    name: str = Field("", max_length=60)
+    settings: dict[str, Annotated[str, Field(max_length=500)]] = Field(default_factory=dict, max_length=10)
+    secret: dict[str, Annotated[str, Field(max_length=20000)]] = Field(default_factory=dict, max_length=5)
 
 
 class ShareBody(BaseModel):
@@ -654,6 +662,58 @@ def create_app(
         context.db.delete_connection(connection_id)
         context.providers.forget(connection_id)
 
+    # Connector accounts: owners add them (checked live, secrets encrypted); editors pick one per chatbot
+
+    @app.get("/api/source-accounts")
+    async def list_source_accounts(context: Ctx) -> dict[str, Any]:
+        kinds = {
+            kind: {"label": info.label, "settings": list(info.settings), "secrets": list(info.secrets)}
+            for kind, info in ACCOUNT_KINDS.items()
+        }
+        sources = {name: {"account": c.account, "location": c.location} for name, c in CONNECTORS.items()}
+        return {"accounts": context.db.list_source_accounts(), "kinds": kinds, "sources": sources}
+
+    @app.post("/api/source-accounts", status_code=201)
+    async def add_source_account(body: SourceAccountBody, context: Ctx) -> dict[str, Any]:
+        info = ACCOUNT_KINDS.get(body.kind)
+        if info is None:
+            raise HTTPException(422, f"unknown account kind '{body.kind}'")
+        settings_ = {key: body.settings.get(key, "").strip() for key, _ in info.settings}
+        secret = {key: body.secret.get(key, "").strip() for key, _ in info.secrets}
+        if not any(secret.values()):
+            raise HTTPException(422, f"Enter the {info.secrets[0][1].lower()}.")
+        try:
+            found = await asyncio.to_thread(info.check, Account(body.kind, settings_, secret))
+        except ConnectorError as exc:
+            raise HTTPException(422, f"Couldn't connect: {exc}") from exc
+        except Exception as exc:  # a driver or SDK error: show what it was, never the secret
+            raise HTTPException(422, f"Couldn't connect: {type(exc).__name__}") from exc
+        taken = {row["name"] for row in context.db.list_source_accounts()}
+        name = base = body.name.strip() or info.label
+        number = 2
+        while name in taken:
+            name, number = f"{base} {number}", number + 1
+        first = next((value for value in secret.values() if value), "")
+        hint = connections.masked(first) if len(first) < 200 else "key file"
+        account_id = context.db.create_source_account(
+            body.kind, name, settings_, connections.encrypt(context.settings, json.dumps(secret)), hint
+        )
+        added = context.db.get_source_account(account_id) or {}
+        return {"account": {key: value for key, value in added.items() if key != "secret"}, "found": found}
+
+    @app.delete("/api/source-accounts/{account_id}", status_code=204)
+    async def remove_source_account(account_id: str, context: Ctx) -> None:
+        if context.db.get_source_account(account_id) is None:
+            raise HTTPException(404, "account not found")
+        users = [
+            kb["name"]
+            for kb in context.db.list_kbs()
+            if context.db.get_config(kb["id"])[1].source.account == account_id
+        ]
+        if users:
+            raise HTTPException(409, f"Used by {', '.join(users)}. Switch them to another source first.")
+        context.db.delete_source_account(account_id)
+
     # Knowledge bases and configs
 
     def for_role(request: Request, kb: dict[str, Any]) -> dict[str, Any]:
@@ -689,7 +749,12 @@ def create_app(
         for name in await asyncio.to_thread(context.index.drop_prefix, f"{kb_id}__"):
             context.db.forget_documents(name)
         context.db.delete_kb(kb_id)
-        await asyncio.to_thread(shutil.rmtree, context.settings.uploads_dir / kb_id, True)
+        for folder in (
+            context.settings.uploads_dir,
+            context.settings.state_dir / "sources",
+            context.settings.state_dir / "web",
+        ):
+            await asyncio.to_thread(shutil.rmtree, folder / kb_id, True)  # uploads and downloaded copies
 
     @app.post("/api/kbs/{kb_id}/share")
     async def share(kb_id: str, body: ShareBody, context: Ctx) -> dict[str, str | None]:
@@ -1077,9 +1142,16 @@ async def _validate(context: AppContext, kb: dict[str, Any], config: KnowledgeBa
         except WebError as exc:
             checks["source"] = {"ok": False}
             errors.append({"loc": ["source", "url"], "msg": str(exc)})
+    elif config.source.type in CONNECTORS:  # the service is first read by the build
+        try:
+            await asyncio.to_thread(check_connector, config.source, context.settings, context.db)
+            checks["source"] = {"ok": True, "files": None, "by_type": {}, "megabytes": None}
+        except SourceError as exc:
+            checks["source"] = {"ok": False}
+            errors.append({"loc": ["source", "account" if "account" in str(exc) else "location"], "msg": str(exc)})
     else:
         try:
-            refs = await asyncio.to_thread(discover, config.source, context.settings, kb["id"])
+            refs = await asyncio.to_thread(discover, config.source, context.settings, kb["id"], context.db)
             by_type: dict[str, int] = {}
             for ref in refs:
                 by_type[ref.path.suffix.lower()] = by_type.get(ref.path.suffix.lower(), 0) + 1

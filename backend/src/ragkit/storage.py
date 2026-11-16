@@ -174,6 +174,16 @@ CREATE TABLE IF NOT EXISTS model_connections (
     key_hint TEXT,
     created_at REAL NOT NULL
 );
+-- Accounts for connectors (S3, databases, Atlassian, Microsoft 365, Google Drive, Notion).
+CREATE TABLE IF NOT EXISTS source_accounts (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL UNIQUE,
+    settings TEXT NOT NULL,  -- JSON, not secret
+    secret TEXT NOT NULL,  -- JSON, encrypted (connections.encrypt)
+    hint TEXT,
+    created_at REAL NOT NULL
+);
 -- Shared by every API process: conversation memory and rate-limit hits.
 CREATE TABLE IF NOT EXISTS conversation_turns (
     session_key TEXT NOT NULL,
@@ -814,6 +824,27 @@ class Database:
 
     def delete_connection(self, connection_id: str) -> bool:
         return self._run("DELETE FROM model_connections WHERE id = ?", (connection_id,)) > 0
+
+    # Connector accounts
+
+    def create_source_account(self, kind: str, name: str, settings: dict[str, str], secret: str, hint: str) -> str:
+        account_id = "acct_" + uuid.uuid4().hex[:10]
+        self._run(
+            "INSERT INTO source_accounts VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (account_id, kind, name, json.dumps(settings), secret, hint, time.time()),
+        )
+        return account_id
+
+    def list_source_accounts(self) -> list[dict[str, Any]]:
+        rows = self._all("SELECT id, kind, name, settings, hint, created_at FROM source_accounts ORDER BY created_at")
+        return [{**row, "settings": json.loads(row["settings"])} for row in rows]
+
+    def get_source_account(self, account_id: str) -> dict[str, Any] | None:
+        row = self._one("SELECT * FROM source_accounts WHERE id = ?", (account_id,))
+        return {**row, "settings": json.loads(row["settings"])} if row else None
+
+    def delete_source_account(self, account_id: str) -> bool:
+        return self._run("DELETE FROM source_accounts WHERE id = ?", (account_id,)) > 0
 
     # Conversation memory and rate limits (in the database, so every API process shares them)
 

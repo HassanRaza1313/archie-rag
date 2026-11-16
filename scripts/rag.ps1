@@ -61,7 +61,7 @@ function Invoke-Setup {
   Ensure-Env
   Info "installing the backend"
   if (Have "uv") {
-    Push-Location $Backend; try { uv sync --frozen --extra rerank --extra dev } finally { Pop-Location }
+    Push-Location $Backend; try { uv sync --frozen --extra rerank --extra connectors --extra dev } finally { Pop-Location }
   } else {
     $py = if (Have "py") { "py" } elseif (Have "python") { "python" } else { Fail "Python 3.11+ is required (or install uv: https://docs.astral.sh/uv/)" }
     if (-not (Test-Path (Join-Path $Backend ".venv"))) { & $py -m venv (Join-Path $Backend ".venv") }

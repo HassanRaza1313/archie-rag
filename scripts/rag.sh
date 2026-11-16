@@ -35,7 +35,7 @@ cmd_setup() {
   ensure_env
   info "installing the backend"
   if have uv; then
-    (cd "$BACKEND" && uv sync --frozen --extra rerank --extra dev)
+    (cd "$BACKEND" && uv sync --frozen --extra rerank --extra connectors --extra dev)
   else
     have python3 || have python || fail "Python 3.11+ is required (or install uv: https://docs.astral.sh/uv/)"
     local py; py="$(command -v python3 || command -v python)"

@@ -1,8 +1,8 @@
-import { useMutation } from "@tanstack/react-query";
-import { Check, FolderOpen, Globe, Upload } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Cable, Check, FolderOpen, Globe, Upload } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, cn, ErrorNote, Input } from "../../components/ui";
+import { Button, cn, ErrorNote, Input, Select, TextArea } from "../../components/ui";
 import { ApiError, api, type Config } from "../../lib/api";
 import { FolderPicker } from "./FolderPicker";
 import { ModelCheck, type ModelChoice } from "./ModelCheck";
@@ -62,12 +62,116 @@ function friendly(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+type ServiceChoice = { type: string; account: string; location: string };
+
+const SERVICES: Record<string, string> = {
+  confluence: "Confluence",
+  jira: "Jira",
+  sharepoint: "SharePoint or OneDrive",
+  google_drive: "Google Drive",
+  notion: "Notion",
+  s3: "Amazon S3 or compatible",
+  database: "A database (read-only)",
+};
+
+/** A service, an account for it (added by an owner in Preferences › Sources) and what to read there. */
+function ServicePicker({ value, onChange }: { value: ServiceChoice; onChange: (value: ServiceChoice) => void }) {
+  const catalog = useQuery({ queryKey: ["source-accounts"], queryFn: api.sourceAccounts });
+  const kind = catalog.data?.sources[value.type]?.account;
+  const accounts = (catalog.data?.accounts ?? []).filter((account) => account.kind === kind);
+  const location = catalog.data?.sources[value.type]?.location;
+  return (
+    <div className="mt-5 space-y-4">
+      <ErrorNote error={catalog.error} />
+      <div>
+        <label htmlFor="service" className="text-sm font-medium">
+          Service
+        </label>
+        <Select
+          id="service"
+          className="mt-1.5"
+          value={value.type}
+          onChange={(e) => {
+            const type = e.target.value;
+            const fits = (catalog.data?.accounts ?? []).filter((a) => a.kind === catalog.data?.sources[type]?.account);
+            onChange({ type, account: fits.length === 1 ? (fits[0]?.id ?? "") : "", location: "" });
+          }}
+        >
+          <option value="">Choose a service…</option>
+          {Object.entries(SERVICES).map(([type, label]) => (
+            <option key={type} value={type}>
+              {label}
+            </option>
+          ))}
+        </Select>
+      </div>
+      {value.type && catalog.data && accounts.length === 0 && (
+        <p className="text-sm text-slate">
+          No {catalog.data.kinds[kind ?? ""]?.label} account yet. An owner adds one in Preferences › Sources, then it
+          appears here.
+        </p>
+      )}
+      {accounts.length > 0 && (
+        <>
+          <div>
+            <label htmlFor="service-account" className="text-sm font-medium">
+              Account
+            </label>
+            <Select
+              id="service-account"
+              className="mt-1.5"
+              value={value.account}
+              onChange={(e) => onChange({ ...value, account: e.target.value })}
+            >
+              <option value="">Choose an account…</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <label htmlFor="service-location" className="text-sm font-medium">
+              What to read
+            </label>
+            {value.type === "database" ? (
+              <TextArea
+                id="service-location"
+                rows={3}
+                spellCheck={false}
+                placeholder={location}
+                value={value.location}
+                onChange={(e) => onChange({ ...value, location: e.target.value })}
+                className="mt-1.5 font-mono text-xs"
+              />
+            ) : (
+              <Input
+                id="service-location"
+                spellCheck={false}
+                placeholder={location}
+                value={value.location}
+                onChange={(e) => onChange({ ...value, location: e.target.value })}
+                className="mt-1.5 font-mono"
+              />
+            )}
+            <p className="mt-1.5 text-xs text-slate">
+              Archie reads it into the chatbot and checks for changes every day, reading only what changed.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function NewChatbotPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
-  const [source, setSource] = useState<"folder" | "uploads" | "website">("folder");
+  const [source, setSource] = useState<"folder" | "uploads" | "website" | "service">("folder");
   const [site, setSite] = useState("");
+  const [service, setService] = useState<ServiceChoice>({ type: "", account: "", location: "" });
   const [folder, setFolder] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [preset, setPreset] = useState("balanced");
@@ -81,7 +185,9 @@ export function NewChatbotPage() {
         ? { type: "uploads" }
         : source === "website"
           ? { type: "website", url: site.trim(), sync_hours: 24 } // websites change: check daily
-          : { type: "local_folder", path: folder },
+          : source === "service"
+            ? { ...service, location: service.location.trim(), sync_hours: 24 }
+            : { type: "local_folder", path: folder },
     ...(models.embedding && { embedding: models.embedding }),
     ...(models.generation && { generation: models.generation }),
   };
@@ -123,7 +229,9 @@ export function NewChatbotPage() {
       ? folder.trim().length > 0
       : source === "website"
         ? /^https?:\/\/\S+\.\S+/.test(site.trim())
-        : files.length > 0;
+        : source === "service"
+          ? Boolean(service.type && service.account && (service.location.trim() || service.type === "notion"))
+          : files.length > 0;
   const valid = [name.trim().length > 0, sourceChosen, true];
   const last = step === STEPS.length - 1;
 
@@ -208,9 +316,19 @@ export function NewChatbotPage() {
                 title="A website"
                 body="Its pages and the documents they link to. Archie checks for changes every day."
               />
+              <Choice
+                name="source"
+                checked={source === "service"}
+                onSelect={() => setSource("service")}
+                icon={<Cable />}
+                title="A connected service"
+                body="S3, a database, Confluence, Jira, SharePoint, OneDrive, Google Drive or Notion."
+              />
             </fieldset>
             {source === "folder" ? (
               <FolderPicker value={folder} onChange={setFolder} />
+            ) : source === "service" ? (
+              <ServicePicker value={service} onChange={setService} />
             ) : source === "website" ? (
               <div className="mt-5">
                 <label htmlFor="site" className="text-sm font-medium">

@@ -8,14 +8,21 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import json
 import os
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
+from ragkit import connections
 from ragkit.config import FILE_TYPES, SourceConfig
+from ragkit.connectors import ACCOUNT_KINDS, CONNECTORS, Account, ConnectorError, fetch
 from ragkit.settings import Settings
 from ragkit.web import WebError, crawl_site
+
+if TYPE_CHECKING:
+    from ragkit.storage import Database
 
 
 class SourceError(ValueError):
@@ -24,9 +31,10 @@ class SourceError(ValueError):
 
 @dataclass(frozen=True)
 class DocumentRef:
-    uri: str  # stable id: path relative to the source root, POSIX separators
+    uri: str  # stable id: path relative to the source root (POSIX separators), or the item's address
     path: Path
     size: int
+    fields: dict[str, Any] = field(default_factory=dict, compare=False)  # structured data from a connector
 
     def content_hash(self) -> str:
         digest = hashlib.sha256()
@@ -106,7 +114,48 @@ SOURCES: dict[str, Callable[[Path, SourceConfig], Iterator[DocumentRef]]] = {
 }
 
 
-def discover(config: SourceConfig, settings: Settings, kb_id: str) -> list[DocumentRef]:
+def load_account(db: Database, settings: Settings, account_id: str, source_type: str) -> Account:
+    """The account a connector source names, with its secret decrypted for this run."""
+    row = db.get_source_account(account_id) if account_id else None
+    needed = CONNECTORS[source_type].account
+    if row is None:
+        raise SourceError(f"choose a {ACCOUNT_KINDS[needed].label} account (owners add them in Preferences › Sources)")
+    if row["kind"] != needed:
+        raise SourceError(
+            f"'{row['name']}' is a {ACCOUNT_KINDS[row['kind']].label} account, not {ACCOUNT_KINDS[needed].label}"
+        )
+    secret = connections.decrypt(settings, row["secret"])
+    if secret is None:
+        raise SourceError(f"the credentials of '{row['name']}' can't be read on this machine; add the account again")
+    return Account(row["kind"], row["settings"], json.loads(secret))
+
+
+def check_connector(config: SourceConfig, settings: Settings, db: Database) -> None:
+    """Quick checks before a build: the account suits the source and can be read, and a location is given.
+    The account was tested live when it was added; the service itself is first read by the build."""
+    load_account(db, settings, config.account, config.type)
+    if config.type == "database":
+        from ragkit.connectors.database import read_only_query
+
+        try:
+            read_only_query(config.location)
+        except ConnectorError as exc:
+            raise SourceError(str(exc)) from exc
+    elif not config.location.strip() and config.type != "notion":
+        raise SourceError(f"enter what to read: {CONNECTORS[config.type].location}")
+
+
+def discover(config: SourceConfig, settings: Settings, kb_id: str, db: Database | None = None) -> list[DocumentRef]:
+    if config.type in CONNECTORS:
+        if db is None:
+            raise SourceError("connector sources need the database")
+        account = load_account(db, settings, config.account, config.type)
+        folder = settings.state_dir / "sources" / kb_id
+        try:
+            items = fetch(config.type, account, config.location, folder, config.max_pages)
+        except ConnectorError as exc:
+            raise SourceError(str(exc)) from exc
+        return [DocumentRef(item.uri, item.path, item.path.stat().st_size, item.fields) for item in items]
     if config.type == "website":
         try:
             pages = crawl_site(config, settings.state_dir / "web" / kb_id, settings.web_allow_private)

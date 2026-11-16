@@ -45,6 +45,7 @@ backend/src/ragkit/
   connections.py  model connections added in the app; keys encrypted at rest
   sources.py      data sources (local folder, uploads, website) with the data-root allowlist
   web.py          website source: crawls one site into a cache, refusing private addresses
+  connectors/     S3, databases, Confluence, Jira, SharePoint/OneDrive, Google Drive and Notion, read through accounts
   injection.py    flags wording aimed at an AI (prompt injection) in indexed passages
   parsing.py      PDF (pdfium text + pdfplumber tables + optional OCR), Markdown, text
   chunking.py     structure-aware and fixed chunking
@@ -302,6 +303,33 @@ with what triggered each one.
 
 Passages sent to a remote model while drafting are redacted as for answers (`privacy.redact_prompt`).
 
+### 6.8 Connectors (`connectors/`)
+A connector lists the items at a `location` in an account and saves each one into `state/sources/<chatbot>/`. A
+manifest keeps each item's version, so a sync downloads only new and changed items and deletes those that are
+gone; the build then reads the cache like a folder, the item's address being its `uri` (so citations show it).
+
+| Source | Account | Location | Version | Fields kept |
+|---|---|---|---|---|
+| S3 (boto3; MinIO, R2, Wasabi via an endpoint) | access key | `bucket/prefix/` | ETag + size | modified |
+| Database (SQLAlchemy; PostgreSQL, MySQL, SQLite, others with a driver) | URL | one `SELECT` | row hash | every short column |
+| Confluence (Cloud REST v2, Data Center v1) | Atlassian | space keys | page version | space, updated |
+| Jira (Cloud enhanced JQL search, Data Center v2) | Atlassian | JQL | issue hash | key, status, type, priority, people, labels, dates |
+| SharePoint and OneDrive (Microsoft Graph, app-only) | Microsoft 365 | folder address or `person@company/Folder` | cTag | modified, modified by, folder |
+| Google Drive (service account, RS256 JWT) | Google | folder address | file version | modified, modified by |
+| Notion (API 2022-06-28) | Notion | page or database address, or empty | last edited | database properties |
+
+Docs, Sheets and Slides export as Markdown, CSV and text; Jira's rich text (ADF) and Notion blocks become
+Markdown; a Confluence page is its storage-format HTML. Database rows: the first column is the id, a title, name or
+subject column titles it, values up to 200 characters become fields (`fields.<column>` on every passage, filterable
+when listed in `retrieval.filter_fields`) and longer text the body. A SQLite file appears in citations by its name
+only. Calls back off on 429/503 (Retry-After, up to 3 times); 401/403/404 become messages people can act on. At
+most `source.max_pages` items are read per sync.
+
+Accounts (`source_accounts`): owners add them (`POST /api/source-accounts`), each checked live before it is saved;
+non-secret settings are stored as JSON, secrets encrypted (Fernet, as model keys) and never returned. A chatbot's
+config names only the account id, so viewers who can read the config never see a secret. An account in use can't be
+removed. Validation before a build only checks the account choice and the location; the service is read by the build.
+
 ## 7. Security and privacy
 
 - API binds to 127.0.0.1; a non-loopback bind needs `RAG_API_KEY` (bearer auth on every route except health).
@@ -309,6 +337,12 @@ Passages sent to a remote model while drafting are redacted as for answers (`pri
 - Source folders must resolve inside `RAG_DATA_ROOTS`; uploads keep only the base name, allow only configured file
   types, and are size-limited. Chat filters are restricted to an allowlist of payload fields. Query length is
   capped.
+- Connectors read only. Databases: one `SELECT` (or `WITH ... SELECT`) is accepted, write keywords are refused, the
+  session is set read-only where the database allows it (PostgreSQL, MySQL, SQLite `mode=ro`), a PostgreSQL
+  statement times out after 120 s, and every transaction is rolled back; a read-only database user is still
+  advised, because a `SELECT` can call functions with side effects. SharePoint downloads use Graph's
+  pre-authorised links, so the bearer token never leaves Graph. Content from every service is screened like web
+  pages (C4). Deleting a chatbot deletes its downloaded copies.
 - PII detectors are regex candidates confirmed by validators: Luhn (cards), mod-97 (IBAN), IP parsing, phone
   formats (international or national, ISBN excluded), US SSN, PK CNIC, UK NINO. Placeholders are numbered
   consistently per request (`[REDACTED_EMAIL_1]`). Logged queries are always redacted.

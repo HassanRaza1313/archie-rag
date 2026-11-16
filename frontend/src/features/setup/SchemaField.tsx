@@ -146,11 +146,105 @@ function NumberInput({
   );
 }
 
+/** Names that humanize() can't guess: brands and acronyms. */
+const OPTION_LABELS: Record<string, string> = {
+  s3: "Amazon S3 or compatible",
+  sharepoint: "SharePoint or OneDrive",
+  google_drive: "Google Drive",
+  local_folder: "A folder",
+  uploads: "Uploaded files",
+};
+
+/** The accounts that suit this source type, from Preferences › Sources. */
+function AccountSelect({
+  id,
+  sourceType,
+  value,
+  describedBy,
+  onChange,
+}: {
+  id: string;
+  sourceType: string;
+  value: string;
+  describedBy: string;
+  onChange: (value: unknown) => void;
+}) {
+  const catalog = useQuery({ queryKey: ["source-accounts"], queryFn: api.sourceAccounts });
+  const kind = catalog.data?.sources[sourceType]?.account;
+  const accounts = (catalog.data?.accounts ?? []).filter((account) => account.kind === kind);
+  if (catalog.data && !accounts.length)
+    return (
+      <p id={id} className="text-sm text-slate">
+        No {catalog.data.kinds[kind ?? ""]?.label ?? ""} account yet. An owner adds one in Preferences › Sources.
+      </p>
+    );
+  return (
+    <Select
+      id={id}
+      aria-describedby={describedBy}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-64 max-w-full"
+    >
+      <option value="">Choose an account…</option>
+      {accounts.map((account) => (
+        <option key={account.id} value={account.id}>
+          {account.name}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+/** What to read in the account; a query gets room to breathe. */
+function LocationField({
+  id,
+  sourceType,
+  value,
+  describedBy,
+  invalid,
+  onChange,
+}: {
+  id: string;
+  sourceType: string;
+  value: string;
+  describedBy: string;
+  invalid: boolean;
+  onChange: (value: unknown) => void;
+}) {
+  const catalog = useQuery({ queryKey: ["source-accounts"], queryFn: api.sourceAccounts });
+  const placeholder = catalog.data?.sources[sourceType]?.location;
+  return sourceType === "database" || sourceType === "jira" ? (
+    <TextArea
+      id={id}
+      rows={sourceType === "database" ? 4 : 2}
+      aria-describedby={describedBy}
+      aria-invalid={invalid}
+      spellCheck={false}
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="font-mono text-xs"
+    />
+  ) : (
+    <Input
+      id={id}
+      aria-describedby={describedBy}
+      aria-invalid={invalid}
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="max-w-xl font-mono"
+    />
+  );
+}
+
 export function SchemaField({
   field,
   value,
   provider,
   kbId,
+  sourceType,
   error,
   changed,
   note,
@@ -161,6 +255,8 @@ export function SchemaField({
   provider?: string;
   /** The chatbot being set up, left out of "Also search". */
   kbId?: string;
+  /** The source type being edited: which accounts fit, and what the location means. */
+  sourceType?: string;
   error?: string | null;
   changed: boolean;
   /** What this edit does, shown while the setting differs from the saved version. */
@@ -187,7 +283,7 @@ export function SchemaField({
         >
           {field.options.map((option) => (
             <option key={option} value={option}>
-              {humanize(option)}
+              {OPTION_LABELS[option] ?? humanize(option)}
             </option>
           ))}
         </Select>
@@ -277,28 +373,49 @@ export function SchemaField({
       );
       break;
     default:
-      control = PROVIDER_FIELDS.has(path) ? (
-        <ProviderSelect
-          id={id}
-          stage={field.stage}
-          value={String(value ?? "")}
-          describedBy={hintId}
-          onChange={onChange}
-        />
-      ) : (
-        <>
-          <Input
+      control =
+        path === "source.account" ? (
+          <AccountSelect
             id={id}
-            aria-describedby={hintId}
-            aria-invalid={invalid}
+            sourceType={sourceType ?? ""}
             value={String(value ?? "")}
-            onChange={(e) => onChange(e.target.value)}
-            list={MODEL_FIELDS.has(path) ? `${id}-models` : undefined}
-            className={cn("max-w-xl", ["path", "url"].includes(field.key) || MODEL_FIELDS.has(path) ? "font-mono" : "")}
+            describedBy={hintId}
+            onChange={onChange}
           />
-          {MODEL_FIELDS.has(path) && provider && <ModelSuggestions provider={provider} id={`${id}-models`} />}
-        </>
-      );
+        ) : path === "source.location" ? (
+          <LocationField
+            id={id}
+            sourceType={sourceType ?? ""}
+            value={String(value ?? "")}
+            describedBy={hintId}
+            invalid={invalid}
+            onChange={onChange}
+          />
+        ) : PROVIDER_FIELDS.has(path) ? (
+          <ProviderSelect
+            id={id}
+            stage={field.stage}
+            value={String(value ?? "")}
+            describedBy={hintId}
+            onChange={onChange}
+          />
+        ) : (
+          <>
+            <Input
+              id={id}
+              aria-describedby={hintId}
+              aria-invalid={invalid}
+              value={String(value ?? "")}
+              onChange={(e) => onChange(e.target.value)}
+              list={MODEL_FIELDS.has(path) ? `${id}-models` : undefined}
+              className={cn(
+                "max-w-xl",
+                ["path", "url"].includes(field.key) || MODEL_FIELDS.has(path) ? "font-mono" : "",
+              )}
+            />
+            {MODEL_FIELDS.has(path) && provider && <ModelSuggestions provider={provider} id={`${id}-models`} />}
+          </>
+        );
   }
   const range =
     (field.kind === "int" || field.kind === "float") && field.min !== undefined && field.max !== undefined

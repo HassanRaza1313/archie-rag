@@ -55,10 +55,32 @@ FILE_TYPES: tuple[FileType, ...] = get_args(FileType)
 
 class SourceConfig(BaseModel):
     model_config = stage("Data source", "Where the documents come from.", rebuild=True)
-    type: Literal["local_folder", "uploads", "website"] = option(
+    type: Literal[
+        "local_folder",
+        "uploads",
+        "website",
+        "s3",
+        "database",
+        "confluence",
+        "jira",
+        "sharepoint",
+        "google_drive",
+        "notion",
+    ] = option(
         "local_folder",
         "Source type",
-        "A folder on this machine, files uploaded through the UI, or the pages of a website.",
+        "A folder on this machine, uploaded files, a website, or a service: S3, a database, Confluence, Jira, "
+        "SharePoint or OneDrive, Google Drive, Notion.",
+    )
+    account: str = option(
+        "", "Account", "The account to read the service with. Owners add accounts in Preferences › Sources."
+    )
+    location: str = option(
+        "",
+        "What to read",
+        "In the account: a bucket and folder, a SELECT query, space keys, a JQL query, a SharePoint folder, a Drive "
+        "folder or a Notion page.",
+        max_length=4000,
     )
     path: str = option(
         "data/sources/sample", "Folder", "Folder to index. Must be inside one of the allowed data roots."
@@ -70,7 +92,9 @@ class SourceConfig(BaseModel):
         "read too.",
         max_length=2000,
     )
-    max_pages: int = option(200, "Most pages", "Stops after this many pages and documents.", ge=1, le=5000)
+    max_pages: int = option(
+        200, "Most documents", "Stops after this many pages, files, rows or issues.", ge=1, le=50000
+    )
     sync_hours: int = option(
         0,
         "Check for changes",

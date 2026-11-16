@@ -87,6 +87,24 @@ export type ChatEvent =
     }
   | { type: "error"; message: string; trace_id?: string };
 
+/** An account a connector reads with (S3, a database, Atlassian, Microsoft 365, Google Drive, Notion). */
+export interface SourceAccount {
+  id: string;
+  kind: string;
+  name: string;
+  settings: Record<string, string>;
+  hint: string | null;
+  created_at: number;
+}
+
+export interface SourceCatalog {
+  accounts: SourceAccount[];
+  /** Account kinds: their label and form fields as [key, label] pairs. */
+  kinds: Record<string, { label: string; settings: [string, string][]; secrets: [string, string][] }>;
+  /** Source types read through an account: which kind they need and what their location is. */
+  sources: Record<string, { account: string; location: string }>;
+}
+
 /** A question people keep asking that went unanswered or was rated unhelpful. */
 export interface Gap {
   kb_id: string;
@@ -445,6 +463,14 @@ export const api = {
   changePerson: (id: string, change: { role?: Role; disabled?: boolean }) =>
     request<Person>(`/api/users/${id}`, patch(change)),
   removePerson: (id: string) => request<void>(`/api/users/${id}`, { method: "DELETE" }),
+  sourceAccounts: () => request<SourceCatalog>("/api/source-accounts"),
+  addSourceAccount: (body: {
+    kind: string;
+    name?: string;
+    settings: Record<string, string>;
+    secret: Record<string, string>;
+  }) => request<{ account: SourceAccount; found: string }>("/api/source-accounts", json(body)),
+  removeSourceAccount: (id: string) => request<void>(`/api/source-accounts/${id}`, { method: "DELETE" }),
   connections: () => request<Connection[]>("/api/connections"),
   addConnection: (body: { kind: ConnectionKind; name?: string; base_url?: string; api_key?: string }) =>
     request<{ connection: Connection; models: string[] }>("/api/connections", json(body)),

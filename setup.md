@@ -234,8 +234,14 @@ gets less unrelated text. Enrichment is not in this table: it needs a chat model
 - Source folders must be inside `RAG_DATA_ROOTS`; the setup assistant's folder picker only lists those.
 - Website sources can't reach this machine or private networks. To index an intranet site, set
   `RAG_WEB_ALLOW_PRIVATE=true` (only if everyone who can edit chatbots may also reach those addresses).
-- `source.sync_hours` re-reads a source on a schedule (new chatbots from a website check daily); only new and
-  changed documents are read again. The worker checks once a minute.
+- `source.sync_hours` re-reads a source on a schedule (new chatbots from a website or service check daily); only
+  new and changed documents are read again. The worker checks once a minute.
+- Connected services (Confluence, Jira, SharePoint/OneDrive, Google Drive, Notion, S3, databases) need the
+  `connectors` extra (`rag setup` and the images include it). Owners add accounts in Preferences › Sources: each is
+  checked live, its secret encrypted with the same key as model keys, and never returned. Give each account read
+  access only: an IAM key that can only read the bucket, a database user that can only `SELECT`, an app
+  registration with `Sites.Read.All`/`Files.Read.All`, a Drive service account shared as Viewer. Account addresses
+  are chosen by owners, so `RAG_WEB_ALLOW_PRIVATE` doesn't apply to them; it covers website sources only.
 - Share links are random 24-character tokens that allow questions to one chatbot only, rate-limited per visitor.
   Behind the HTTPS profile, the visitor's address comes from the proxy chain (nginx believes `X-Forwarded-For` only
   from private networks). Deleting a chatbot deletes its uploads and cached answers.

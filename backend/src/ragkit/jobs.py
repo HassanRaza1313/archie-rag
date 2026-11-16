@@ -184,7 +184,7 @@ class Builder:
         embedder = self.providers.get(config.embedding.provider)
 
         tracker.start("validate")
-        refs = await asyncio.to_thread(discover, config.source, self.settings, kb_id)  # a website crawls here
+        refs = await asyncio.to_thread(discover, config.source, self.settings, kb_id, self.db)  # remote ones fetch
         if not refs and not config.retrieval.groups:  # a chatbot that only searches others needs no files
             raise BuildFailedError("the source contains no supported files")
         try:
@@ -437,7 +437,7 @@ class Builder:
         edits = self.db.chunk_edits(kb_id, ref.uri, content_hash)
         kept: list[Chunk] = []
         duplicates = 0
-        untrusted = config.source.type == "website"
+        untrusted = config.source.type not in ("local_folder", "uploads")  # web pages and services
         for chunk in chunks:
             edit = edits.get(chunk.ordinal)
             if edit and edit["text"]:
@@ -535,6 +535,8 @@ class Builder:
             "ingested_at": time.time(),
             "text": chunk.text,
         }
+        if ref.fields:  # a connector's structured data: filterable as fields.<name>
+            payload["fields"] = ref.fields
         if chunk.flagged:
             payload["flagged"] = chunk.flagged
         if chunk.excluded:

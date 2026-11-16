@@ -38,11 +38,17 @@ const PRESET_NAMES: Record<string, string> = {
 };
 
 /** Source settings that only apply to some source types; every other field shows for all of them. */
+const CONNECTORS = ["s3", "database", "confluence", "jira", "sharepoint", "google_drive", "notion"];
 const SOURCE_FIELDS_FOR: Record<string, string[]> = {
   path: ["local_folder"],
   recursive: ["local_folder", "uploads"],
+  include: ["local_folder", "uploads"],
+  exclude: ["local_folder", "uploads"],
   url: ["website"],
-  max_pages: ["website"],
+  account: CONNECTORS,
+  location: CONNECTORS,
+  max_pages: ["website", ...CONNECTORS],
+  file_types: ["local_folder", "uploads", "website", "s3", "sharepoint", "google_drive"],
 };
 
 export function sourceFieldShown(key: string, sourceType: string): boolean {
@@ -303,6 +309,7 @@ export function SetupPage() {
       value={getField(draft, item.stage, item.key)}
       provider={String(getField(draft, item.stage, "provider") ?? "")}
       kbId={kbId}
+      sourceType={sourceType}
       changed={unsaved.has(`${item.stage}.${item.key}`)}
       note={
         schema.data && kb.data && unsaved.has(`${item.stage}.${item.key}`)

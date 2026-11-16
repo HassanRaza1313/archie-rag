@@ -5,18 +5,25 @@ stage model in `config.py` if it needs any, and the setup UI picks them up from 
 
 ## A data source
 
-`backend/src/ragkit/sources.py`: a source is a function that yields `DocumentRef(uri, path, size)`.
+A service with an account (an API, a bucket, a database) is a connector: add a module to
+`backend/src/ragkit/connectors/` that registers an `AccountKind` (form fields, a live `check`) and a `Connector`
+whose `fetch(account, location, cache, limit)` returns `cache.keep(uri, version, suffix, load, fields)` for each item.
+The cache downloads only changed versions and removes items that are gone; `connectors/notion.py` is a short
+example. Add the type to `SourceConfig.type`, a note in `notes.py`, the name in `CONNECTORS` in `SetupPage.tsx` and
+`SERVICES` in `NewChatbotPage.tsx`, and a test with the service's documented responses (`tests/test_connectors.py`).
+
+For local sources, `backend/src/ragkit/sources.py`: a source is a function that yields `DocumentRef(uri, path, size)`.
 
 ```python
-def discover_s3(root: Path, config: SourceConfig) -> Iterator[DocumentRef]:
-    # Sync the bucket prefix into `root` (a local cache), then reuse the folder walker.
-    sync_bucket(config.path, root)
+def discover_mail_archive(root: Path, config: SourceConfig) -> Iterator[DocumentRef]:
+    # Unpack an archive kept inside the data roots into `root`, then reuse the folder walker.
+    unpack(config.path, root)
     yield from discover_folder(root, config)
 
-SOURCES["s3"] = discover_s3
+SOURCES["mail_archive"] = discover_mail_archive
 ```
 
-Add `"s3"` to `SourceConfig.type`'s `Literal`, and any options (bucket, region) as fields on `SourceConfig` with
+Add `"mail_archive"` to `SourceConfig.type`'s `Literal`, and any options as fields on `SourceConfig` with
 `option(...)` so they appear in the UI with help text. `uri` must be stable across runs: incremental builds and
 reconciliation key on it. The website source (`web.py`) is the worked example of a remote source: it fetches into
 `state_dir/web/<chatbot>`, uses the page address as `uri` (citations then show it), drops cached files that are

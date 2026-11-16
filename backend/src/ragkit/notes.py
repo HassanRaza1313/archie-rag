@@ -14,7 +14,16 @@ NOTES: dict[str, dict[str, str]] = {
         "uploads": "Uses files uploaded in the app. Best for a handful of documents; nothing outside Archie changes.",
         "website": "Reads a website's pages and linked documents. Web pages are untrusted: sentences that read like "
         "instructions to an AI are removed, and you can restore them on the Documents page.",
+        "s3": "Reads files in an S3 bucket (or MinIO, R2 and other compatible storage); only changed files download.",
+        "database": "Each row a SELECT returns becomes a document, its columns kept as fields. Archie never writes.",
+        "confluence": "Reads every page in the chosen spaces; only edited pages download again.",
+        "jira": "Each issue a JQL query finds becomes a document with its comments; status and owner stay as fields.",
+        "sharepoint": "Reads a SharePoint folder or a OneDrive, subfolders included; only changed files download.",
+        "google_drive": "Reads a Drive folder shared with the account; Docs, Sheets and Slides are read as text.",
+        "notion": "Reads Notion pages with their sub-pages, or a database's rows with their properties as fields.",
     },
+    "source.account": {"*": "The next build reads with this account. Only owners can add accounts."},
+    "source.location": {"*": "The next build reads this; documents no longer in it are removed from the chatbot."},
     "source.url": {"*": "The next build reads this site. Pages outside the start page's folder are not followed."},
     "source.max_pages": {
         "up": "Reads more of the site: builds take longer.",

@@ -21,13 +21,13 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv UV_
 WORKDIR /src
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    extras="--extra rerank"; [ "$INSTALL_OCR" = "true" ] && extras="$extras --extra ocr"; \
+    extras="--extra rerank --extra connectors"; [ "$INSTALL_OCR" = "true" ] && extras="$extras --extra ocr"; \
     [ "$INSTALL_LAYOUT" = "true" ] && extras="$extras --extra layout"; \
     [ "$INSTALL_AUDIO" = "true" ] && extras="$extras --extra audio"; \
     uv sync --frozen --no-dev $extras --no-install-project
 COPY backend/src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
-    extras="--extra rerank"; [ "$INSTALL_OCR" = "true" ] && extras="$extras --extra ocr"; \
+    extras="--extra rerank --extra connectors"; [ "$INSTALL_OCR" = "true" ] && extras="$extras --extra ocr"; \
     [ "$INSTALL_LAYOUT" = "true" ] && extras="$extras --extra layout"; \
     [ "$INSTALL_AUDIO" = "true" ] && extras="$extras --extra audio"; \
     uv sync --frozen --no-dev $extras --no-editable

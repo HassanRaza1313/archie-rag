@@ -171,8 +171,9 @@ passage it cites, by default; unbacked sentences are marked, and abstain mode re
 answer, shared pages too; Status lists the most asked unanswered or unhelpful questions); G3 golden sets drafted for you (done: drafted
 from the documents, kept per chatbot, re-run after every rebuild or settings save, each question marked better or
 worse); F4 connectors with incremental sync (Jira, Confluence, SharePoint/OneDrive, S3, Google
-Drive, read-only databases, websites) that keep their fields as structured data (started: scheduled sync for every
-source and the website source are done, with C4; the account-based connectors and H2 follow); F5 structured answers (filters and
+Drive, read-only databases, websites) that keep their fields as structured data (done: scheduled sync for every
+source, websites, S3, read-only databases, Confluence, Jira, SharePoint/OneDrive, Google Drive and Notion, with
+accounts owners add once and C4 screening; H2 scoped keys follows); F5 structured answers (filters and
 counts from fields) and an entity layer; F6 optional graph expansion. Postgres, the load test and single sign-on
 follow F4. The order was refined by the ideas review in §11.
 
@@ -280,4 +281,4 @@ evaluation per config version, backups, and keys and settings exported as YAML.
 - Answer-style templates (comparison, table extractor): the presets and chunking templates cover them.
 
 **Order:** F3 groups and router (done); G1, G2 and G3 (done; they measure quality before connectors bring volume); F4 connectors
-with C4 and H2 (in progress: sync, website source and C4 done); H1 and E1; G4, G5; F5 with spreadsheet tables; H3 to H8 as they fit; then G6, B1 Postgres, SSO, F6.
+with C4 (done) and H2; H1 and E1; G4, G5; F5 with spreadsheet tables; H3 to H8 as they fit; then G6, B1 Postgres, SSO, F6.
