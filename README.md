@@ -27,7 +27,8 @@ retrieved and decided. (The Python package and CLI are called `ragkit`.)
 - **Inspect and fix ingestion.** A Documents page shows how every file was read and split, flags the ones likely
   misread, and lets you edit or exclude passages; edits are searchable at once and survive rebuilds.
 - **Share it.** One switch gives a chatbot a link anyone can ask, and a one-line snippet puts it on any
-  website as a chat button. Visitors can only ask questions, rate-limited; HTTPS comes with one profile.
+  website as a chat button. Visitors can only ask questions, rate-limited; HTTPS comes with one profile. For other
+  apps and scripts, owners make API keys limited to one chatbot and to asking or managing, revocable at once.
 - **Builds as jobs.** Incremental, resumable, cancellable, with a live stage timeline and zero-downtime index swaps.
 - **Telemetry that explains.** Per request: candidate funnel, agent decisions, latency waterfall, top chunks with
   dense and keyword ranks. Per build: stage counts, failures and a corpus profile. Correlated logs, Prometheus
@@ -67,7 +68,7 @@ style → **Create**. Archie builds it and opens Ask. Requirements, every comman
 ## Development
 
 ```bash
-cd backend && .venv/bin/python -m pytest          # 283 tests; ruff + mypy configured in pyproject.toml
+cd backend && .venv/bin/python -m pytest          # 286 tests; ruff + mypy configured in pyproject.toml
 cd frontend && npm test && npm run lint && npm run typecheck
 ```
 

@@ -157,6 +157,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at REAL NOT NULL
 );
+-- Scoped API keys (H2): only a hash is kept; the key is shown once when it is made.
+CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    prefix TEXT NOT NULL,
+    kb_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE,  -- NULL: every chatbot
+    scope TEXT NOT NULL,  -- ask | manage
+    created_by TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    last_used_at REAL
+);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     at REAL NOT NULL,
@@ -780,6 +792,31 @@ class Database:
         with self.transaction() as conn:
             conn.execute("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
             conn.execute("INSERT INTO sessions VALUES (?, ?, ?)", (token_hash, user_id, expires_at))
+
+    def create_api_key(
+        self, name: str, token_hash: str, prefix: str, kb_id: str | None, scope: str, created_by: str
+    ) -> str:
+        key_id = "key_" + uuid.uuid4().hex[:10]
+        self._run(
+            "INSERT INTO api_keys VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            (key_id, name, token_hash, prefix, kb_id, scope, created_by, time.time()),
+        )
+        return key_id
+
+    def list_api_keys(self) -> list[dict[str, Any]]:
+        return self._all(
+            "SELECT id, name, prefix, kb_id, scope, created_by, created_at, last_used_at FROM api_keys "
+            "ORDER BY created_at"
+        )
+
+    def api_key_by_hash(self, token_hash: str) -> dict[str, Any] | None:
+        row = self._one("SELECT id, name, kb_id, scope, last_used_at FROM api_keys WHERE token_hash = ?", (token_hash,))
+        if row and (row["last_used_at"] or 0) < time.time() - 60:  # at most one write a minute per key
+            self._run("UPDATE api_keys SET last_used_at = ? WHERE id = ?", (time.time(), row["id"]))
+        return row
+
+    def delete_api_key(self, key_id: str) -> bool:
+        return self._run("DELETE FROM api_keys WHERE id = ?", (key_id,)) > 0
 
     def session_user(self, token_hash: str) -> dict[str, Any] | None:
         return self._one(

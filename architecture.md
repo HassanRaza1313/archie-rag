@@ -333,6 +333,11 @@ removed. Validation before a build only checks the account choice and the locati
 ## 7. Security and privacy
 
 - API binds to 127.0.0.1; a non-loopback bind needs `RAG_API_KEY` (bearer auth on every route except health).
+- Scoped API keys (H2): `rk_` plus 32 random bytes, stored as a SHA-256 hash with the first 10 characters for
+  recognition; scope `ask` acts as a viewer and `manage` as an editor (never an owner), optionally limited to one
+  chatbot, whose key then reaches only `/api/kbs/<id>…` and read-only system routes (`accounts.key_allows`). Only
+  owners make or revoke keys; keys of a deleted chatbot go with it; last use is recorded at most once a minute. A
+  bearer token that matches nothing is refused (401) unless a signed-in session comes with it.
   Containers set `RAG_PUBLIC_BIND_OK` and publish ports on 127.0.0.1 by default.
 - Source folders must resolve inside `RAG_DATA_ROOTS`; uploads keep only the base name, allow only configured file
   types, and are size-limited. Chat filters are restricted to an allowlist of payload fields. Query length is
@@ -409,6 +414,8 @@ exporter can be added without touching call sites.
 | `POST /api/kbs/{id}/share` `{enabled, reset}` | Turn the share link on or off, or replace it |
 | `GET /api/auth/me`, `POST /api/auth/owner`, `…/sign-in`, `…/sign-out`, `…/password`, `GET/POST /api/auth/invite/{token}` | Accounts: who is signed in, the first owner, sessions, invitations and password resets |
 | `GET/POST /api/users`, `PATCH/DELETE /api/users/{id}`, `POST /api/users/{id}/invite`, `GET /api/audit` | People and the change history (owners only) |
+| `GET/POST /api/keys` `{name, kb_id, scope}`, `DELETE /api/keys/{id}` | Scoped API keys (owners only); the key is returned once, on creation |
+| `GET/POST /api/source-accounts`, `DELETE /api/source-accounts/{id}` | Connector accounts: owners add (checked live) and remove; editors list |
 | `GET /api/share/{token}`, `…/suggestions`, `POST …/chat`, `POST …/feedback`, `DELETE …/sessions/{sid}` | Shared chatbot: no admin key, rate-limited per visitor |
 | `POST /api/kbs/{id}/feedback` `{trace_id, rating: up·down·null}`, `GET /api/gaps?days=` | Rate an answer (viewers may); the most asked unanswered or unhelpful questions (editors) |
 | `GET /api/system/folders?path=` | Folder picker: one level inside the allowed data roots, with supported-file counts |

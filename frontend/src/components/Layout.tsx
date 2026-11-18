@@ -15,6 +15,7 @@ import {
 import { type ReactNode, useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { can, useMe } from "../features/account/auth";
+import { KeysGroup } from "../features/models/KeysGroup";
 import { ModelsGroup } from "../features/models/ModelsGroup";
 import { SourcesGroup } from "../features/models/SourcesGroup";
 import { api, getApiKey, type KnowledgeBase, setApiKey } from "../lib/api";
@@ -277,6 +278,7 @@ function PreferencesDialog({
         <AccountGroup />
         <ModelsGroup />
         <SourcesGroup />
+        <KeysGroup />
         {me.data?.via !== "account" && (
           <Group
             title="Access key"

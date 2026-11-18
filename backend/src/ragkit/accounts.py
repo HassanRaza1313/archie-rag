@@ -30,17 +30,34 @@ _VIEWER = re.compile(
 )
 # Provider keys are owner business: only owners add or remove model connections.
 _OWNER = re.compile(
-    r"[A-Z]+ /api/(users|audit)(/.*)?|DELETE /api/kbs/[^/]+|(POST|DELETE) /api/(connections|source-accounts)(/.*)?"
+    r"[A-Z]+ /api/(users|audit|keys)(/.*)?|DELETE /api/kbs/[^/]+|(POST|DELETE) /api/(connections|source-accounts)(/.*)?"
 )
 
 
 @dataclass(frozen=True)
 class Identity:
-    """Who is making a request: a signed-in person, the admin API key, or anyone on an open local install."""
+    """Who is making a request: a signed-in person, an API key, or anyone on an open local install."""
 
     name: str
     role: str
     user_id: str | None = None
+    kb_id: str | None = None  # a key limited to one chatbot
+
+
+KEY_SCOPES = {"ask": "viewer", "manage": "editor"}  # a key's scope is its role; no key is ever an owner
+KEY_PREFIX = "rk_"
+# Besides its own chatbot's routes, a key for one chatbot may read only what describes the system itself.
+_KEY_GLOBAL = re.compile(r"GET /api/(schema|presets/[^/]+|system/(health|ready|capabilities))")
+
+
+def key_allows(method: str, path: str, kb_id: str) -> bool:
+    """Whether a key limited to ``kb_id`` may call this route (its role is checked separately)."""
+    path = path.rstrip("/")
+    return (
+        path == f"/api/kbs/{kb_id}"
+        or path.startswith(f"/api/kbs/{kb_id}/")
+        or bool(_KEY_GLOBAL.fullmatch(f"{method} {path}"))
+    )
 
 
 def rank(role: str) -> int:

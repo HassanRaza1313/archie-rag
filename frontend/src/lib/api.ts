@@ -87,6 +87,18 @@ export type ChatEvent =
     }
   | { type: "error"; message: string; trace_id?: string };
 
+/** A key for scripts and other apps; only its first characters are ever shown again. */
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  kb_id: string | null;
+  scope: "ask" | "manage";
+  created_by: string;
+  created_at: number;
+  last_used_at: number | null;
+}
+
 /** An account a connector reads with (S3, a database, Atlassian, Microsoft 365, Google Drive, Notion). */
 export interface SourceAccount {
   id: string;
@@ -463,6 +475,10 @@ export const api = {
   changePerson: (id: string, change: { role?: Role; disabled?: boolean }) =>
     request<Person>(`/api/users/${id}`, patch(change)),
   removePerson: (id: string) => request<void>(`/api/users/${id}`, { method: "DELETE" }),
+  apiKeys: () => request<ApiKey[]>("/api/keys"),
+  createKey: (body: { name: string; kb_id: string | null; scope: ApiKey["scope"] }) =>
+    request<{ key: ApiKey; token: string }>("/api/keys", json(body)),
+  revokeKey: (id: string) => request<void>(`/api/keys/${id}`, { method: "DELETE" }),
   sourceAccounts: () => request<SourceCatalog>("/api/source-accounts"),
   addSourceAccount: (body: {
     kind: string;

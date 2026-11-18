@@ -36,6 +36,14 @@ const ACTIONS: Record<string, string> = {
   "POST /api/users/{user_id}/invite": "made a new sign-in link",
   "PATCH /api/users/{user_id}": "changed someone's access",
   "DELETE /api/users/{user_id}": "removed someone",
+  "POST /api/keys": "made an API key",
+  "DELETE /api/keys/{key_id}": "revoked an API key",
+  "POST /api/connections": "added a model provider",
+  "DELETE /api/connections/{connection_id}": "removed a model provider",
+  "POST /api/source-accounts": "added a source account",
+  "DELETE /api/source-accounts/{account_id}": "removed a source account",
+  "PUT /api/kbs/{kb_id}/golden": "changed test questions",
+  "POST /api/kbs/{kb_id}/golden/draft": "drafted test questions",
 };
 
 /** An audit entry in words: "started a build", or the raw request when there is no wording for it. */

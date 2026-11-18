@@ -173,7 +173,7 @@ from the documents, kept per chatbot, re-run after every rebuild or settings sav
 worse); F4 connectors with incremental sync (Jira, Confluence, SharePoint/OneDrive, S3, Google
 Drive, read-only databases, websites) that keep their fields as structured data (done: scheduled sync for every
 source, websites, S3, read-only databases, Confluence, Jira, SharePoint/OneDrive, Google Drive and Notion, with
-accounts owners add once and C4 screening; H2 scoped keys follows); F5 structured answers (filters and
+accounts owners add once and C4 screening; H2 scoped keys done); F5 structured answers (filters and
 counts from fields) and an entity layer; F6 optional graph expansion. Postgres, the load test and single sign-on
 follow F4. The order was refined by the ideas review in §11.
 
@@ -256,7 +256,7 @@ evaluation per config version, backups, and keys and settings exported as YAML.
 | G5 Source dates | Citations show each document's date; old ones are marked; a newer conflicting source is preferred and noted | Stale policies are a common wrong answer |
 | G6 Replay | Re-ask a past question on another settings version or model and compare side by side | Pairs with changing components on the go |
 | H1 OpenAI-compatible endpoint | `/v1/chat/completions` per chatbot with a scoped key, so Open WebUI, Slack bots and other tools can use a chatbot | Big reach for little code; alongside the MCP server (E1) |
-| H2 Scoped keys | Keys limited to one chatbot and to asking or managing (C1 made concrete) | Needed by H1 and E1 |
+| H2 Scoped keys (done) | Keys limited to one chatbot and to asking or managing (C1 made concrete) | Needed by H1 and E1 |
 | H3 Cost per answer | Price per model for paid providers; cost shown in the trace and per chatbot on Health | Paid models are now one click away |
 | H4 OpenTelemetry export | Optional OTLP export of request traces to Langfuse, Phoenix, Grafana or Datadog | Fits existing observability stacks |
 | H5 Safe upgrades | `rag up` takes a backup before a new version migrates the database; an API stability note | RAGFlow 1.0 upgrades were irreversible |
@@ -281,4 +281,4 @@ evaluation per config version, backups, and keys and settings exported as YAML.
 - Answer-style templates (comparison, table extractor): the presets and chunking templates cover them.
 
 **Order:** F3 groups and router (done); G1, G2 and G3 (done; they measure quality before connectors bring volume); F4 connectors
-with C4 (done) and H2; H1 and E1; G4, G5; F5 with spreadsheet tables; H3 to H8 as they fit; then G6, B1 Postgres, SSO, F6.
+with C4 and H2 (done); H1 and E1; G4, G5; F5 with spreadsheet tables; H3 to H8 as they fit; then G6, B1 Postgres, SSO, F6.

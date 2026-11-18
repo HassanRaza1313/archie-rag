@@ -31,11 +31,14 @@ from pydantic import BaseModel, Field, ValidationError
 from ragkit import __version__, connections
 from ragkit.accounts import (
     INVITE_DAYS,
+    KEY_PREFIX,
+    KEY_SCOPES,
     ROLES,
     SESSION_DAYS,
     Identity,
     check_password,
     hash_password,
+    key_allows,
     new_token,
     password_problem,
     rank,
@@ -165,6 +168,12 @@ class ConnectionBody(BaseModel):
     api_key: str = Field("", max_length=1000)
 
 
+class KeyBody(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    kb_id: str | None = Field(default=None, max_length=40)  # None: every chatbot
+    scope: Literal["ask", "manage"] = "ask"
+
+
 class SourceAccountBody(BaseModel):
     kind: str = Field(max_length=40)
     name: str = Field("", max_length=60)
@@ -244,9 +253,13 @@ def create_app(
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         if settings.api_key and supplied and hmac.compare_digest(supplied.encode(), settings.api_key.encode()):
             return Identity("API key", "owner")
+        if supplied.startswith(KEY_PREFIX) and (key := context.db.api_key_by_hash(token_hash(supplied))):
+            return Identity(f"key {key['name']}", KEY_SCOPES[key["scope"]], kb_id=key["kb_id"])
         cookie = request.cookies.get(SESSION_COOKIE)
         if cookie and (user := context.db.session_user(token_hash(cookie))):
             return Identity(user["email"], user["role"], user["id"])
+        if supplied:
+            return None  # a wrong or revoked key is refused, never let through as an open install's owner
         if not settings.api_key and context.db.user_count() == 0 and _is_local(request):
             return Identity("local", "owner")  # a fresh install, used from its own machine or network
         return None
@@ -268,6 +281,8 @@ def create_app(
                 return JSONResponse({"detail": "sign in first"}, status_code=401)
             if rank(identity.role) < rank(required_role(method, path)):
                 return JSONResponse({"detail": f"a {identity.role} can't do this"}, status_code=403)
+            if identity.kb_id and not key_allows(method, path, identity.kb_id):
+                return JSONResponse({"detail": "this key is limited to one chatbot"}, status_code=403)
         response = await call_next(request)
         if (
             guarded
@@ -535,6 +550,28 @@ def create_app(
     @app.get("/api/audit")
     async def audit(context: Ctx, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         return context.db.audit_log(max(1, min(limit, 500)), max(0, offset))
+
+    # Scoped API keys (owners): for scripts, other apps and integrations
+
+    @app.get("/api/keys")
+    async def list_keys(context: Ctx) -> list[dict[str, Any]]:
+        return context.db.list_api_keys()
+
+    @app.post("/api/keys", status_code=201)
+    async def create_key(body: KeyBody, request: Request, context: Ctx) -> dict[str, Any]:
+        if body.kb_id:
+            kb_or_404(context, body.kb_id)
+        token = KEY_PREFIX + new_token()[0]
+        hashed = token_hash(token)
+        identity: Identity = request.state.identity
+        key_id = context.db.create_api_key(body.name.strip(), hashed, token[:10], body.kb_id, body.scope, identity.name)
+        key = next(row for row in context.db.list_api_keys() if row["id"] == key_id)
+        return {"key": key, "token": token}  # the only time the key is ever shown
+
+    @app.delete("/api/keys/{key_id}", status_code=204)
+    async def revoke_key(key_id: str, context: Ctx) -> None:
+        if not context.db.delete_api_key(key_id):
+            raise HTTPException(404, "key not found")
 
     @app.get("/api/system/folders")
     async def folders(context: Ctx, path: str | None = None) -> dict[str, Any]:

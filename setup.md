@@ -175,6 +175,13 @@ hash), lasting 14 days. Sign-in is limited to 10 attempts a minute per address, 
 change history. A forgotten password: an owner makes a **New Password Link**. `RAG_API_KEY` keeps working as an
 owner-level key for scripts and monitoring, and must be supplied to create the first owner when it is set.
 
+For anything else, owners make **API keys** in Preferences › API keys: each is limited to one chatbot or all of
+them, and to asking (like someone who can ask) or managing (like an editor; never people, keys or deleting). A key
+limited to one chatbot reaches only that chatbot's routes plus `/api/schema`, `/api/presets` and the system health
+checks. Send it as `Authorization: Bearer rk_…`. Archie stores only a hash and shows the key once; revoking it
+stops it at once, and what a key changes appears in the change history under its name. A key that is wrong or
+revoked is refused even on a fresh install that has no accounts yet.
+
 ### Optional readers
 | Extra | Adds | Install locally |
 |---|---|---|
