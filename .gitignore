@@ -43,3 +43,6 @@ bench/.state/
 
 # Backups hold people, questions and documents
 /backups/
+
+# Installed agent skills (restore from skills-lock.json)
+.agents/
